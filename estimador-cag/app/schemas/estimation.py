@@ -11,3 +11,5 @@ class EstimationResponse(BaseModel):
     estimation: str
     model: str
     provider: str
+    input_tokens: int = 0
+    output_tokens: int = 0
