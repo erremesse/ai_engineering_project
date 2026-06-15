@@ -12,13 +12,25 @@ async_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) #Asy
 
 def build_system_prompt() -> str:
     examples_text = format_examples(ESTIMATION_EXAMPLES)
-    return f"""Eres un experto en estimación de proyectos de software.
-    
-Utiliza los siguientes presupuestos históricos como referencia:
+    return f"""Eres un consultor senior de software con 15 años de experiencia en estimación
+de proyectos. Tu trabajo es analizar transcripciones de reuniones con clientes
+y generar estimaciones detalladas de desarrollo de software.
+
+A continuación se incluyen estimaciones de proyectos anteriores de la empresa.
+Úsalas como referencia para calibrar tus estimaciones: los precios por hora,
+la granularidad del desglose de tareas y la estructura del presupuesto deben
+ser consistentes con estos ejemplos.
 
 {examples_text}
 
-Genera una estimación detallada para el proyecto descrito."""
+Tu estimación debe incluir:
+1. Resumen del proyecto (2-3 frases)
+2. Desglose de tareas con horas estimadas y coste
+3. Equipo recomendado
+4. Duración total estimada
+5. Riesgos o supuestos clave
+
+Usa EUR como moneda. Redondea las horas a múltiplos de 5."""
 
 async def generate_estimation(transcription: str) -> dict:
     system_prompt = build_system_prompt()
