@@ -24,10 +24,21 @@ with st.sidebar:
 
     st.divider()
 
+    st.header("Ejemplos CAG en el prompt")
+    n_examples = st.slider(
+        label="",
+        min_value=1,
+        max_value=len(ESTIMATION_EXAMPLES),
+        value=len(ESTIMATION_EXAMPLES),
+        key="n_examples_slider",
+    )
+
+    st.divider()
+
     st.header("System prompt activo")
     st.text_area(
         label="",
-        value=build_system_prompt(),
+        value=build_system_prompt(n_examples),
         height=220,
         disabled=True,
         key="system_prompt_display",
@@ -36,9 +47,9 @@ with st.sidebar:
     st.divider()
 
     st.header("Contexto CAG — ejemplos inyectados")
-    for i, example in enumerate(ESTIMATION_EXAMPLES, 1):
+    for i, example in enumerate(ESTIMATION_EXAMPLES[:n_examples], 1):
         with st.expander(f"Ejemplo {i}"):
-            st.markdown("**Resumen de reunión:**")
+            st.markdown("**Resumen de reunion:**")
             st.caption(example["meeting_summary"])
             st.markdown("**Estimacion de referencia:**")
             st.caption(example["estimation"])
@@ -75,7 +86,7 @@ if prompt := st.chat_input("Pega aqui la transcripcion o descripcion del proyect
             metadata_sink: dict = {}
 
             def _stream_response(text: str, sink: dict):
-                with httpx.stream("POST", STREAM_URL, json={"transcription": text}, timeout=60) as r:
+                with httpx.stream("POST", STREAM_URL, json={"transcription": text, "n_examples": n_examples}, timeout=60) as r:
                     r.raise_for_status()
                     for chunk in r.iter_text():
                         if chunk.startswith("\x00"):
@@ -97,7 +108,11 @@ if prompt := st.chat_input("Pega aqui la transcripcion o descripcion del proyect
 
         else:
             try:
-                response = httpx.post(API_URL, json={"transcription": prompt}, timeout=60)
+                response = httpx.post(
+                    API_URL,
+                    json={"transcription": prompt, "n_examples": n_examples},
+                    timeout=httpx.Timeout(connect=10, read=300, write=10, pool=5),
+                )
                 response.raise_for_status()
                 data = response.json()
                 estimation = data["estimation"]

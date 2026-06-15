@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     OLLAMA_API_BASE: str | None = None
     OLLAMA_MODELS: str = "llama3.3:70b,deepseek-r1:70b"
 
+    # CAG context
+    NUM_CAG_EXAMPLES: int = 5
+
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

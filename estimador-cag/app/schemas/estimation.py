@@ -6,6 +6,11 @@ class EstimationRequest(BaseModel):
         min_length=50,
         description="Transcripción de la reunión con el cliente"
     )
+    n_examples: int | None = Field(
+        default=None,
+        ge=1,
+        description="Número de ejemplos CAG a inyectar en el prompt (por defecto: NUM_CAG_EXAMPLES)"
+    )
 
 class TokenUsage(BaseModel):
     """Token consumption details from the LLM call."""

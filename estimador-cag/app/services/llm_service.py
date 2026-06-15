@@ -8,8 +8,9 @@ settings = get_settings()
 MAX_TOKENS = 1500
 
 
-def build_system_prompt() -> str:
-    examples_text = format_examples(ESTIMATION_EXAMPLES)
+def build_system_prompt(n_examples: int | None = None) -> str:
+    n = min(n_examples or settings.NUM_CAG_EXAMPLES, len(ESTIMATION_EXAMPLES))
+    examples_text = format_examples(ESTIMATION_EXAMPLES[:n])
     return f"""Eres un consultor senior de software con 15 años de experiencia en estimación
 de proyectos. Tu trabajo es analizar transcripciones de reuniones con clientes
 y generar estimaciones detalladas de desarrollo de software.
@@ -31,9 +32,9 @@ Tu estimación debe incluir:
 Usa EUR como moneda. Redondea las horas a múltiplos de 5."""
 
 
-async def generate_estimation(transcription: str) -> dict:
+async def generate_estimation(transcription: str, n_examples: int | None = None) -> dict:
     messages = [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(n_examples)},
         {"role": "user", "content": transcription},
     ]
     response = await router.acompletion(
@@ -54,9 +55,9 @@ async def generate_estimation(transcription: str) -> dict:
     }
 
 
-async def stream_estimation(transcription: str) -> AsyncIterator[str]:
+async def stream_estimation(transcription: str, n_examples: int | None = None) -> AsyncIterator[str]:
     messages = [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(n_examples)},
         {"role": "user", "content": transcription},
     ]
     response = await router.acompletion(
