@@ -7,9 +7,15 @@ class EstimationRequest(BaseModel):
         description="Transcripción de la reunión con el cliente"
     )
 
+class TokenUsage(BaseModel):
+    """Token consumption details from the LLM call."""
+
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
 class EstimationResponse(BaseModel):
     estimation: str
     model: str
     provider: str
-    input_tokens: int = 0
-    output_tokens: int = 0
+    usage: TokenUsage

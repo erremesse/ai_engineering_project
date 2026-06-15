@@ -5,10 +5,15 @@ from functools import lru_cache
 class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
-    LLM_PROVIDER: Literal["openai", "anthropic"] = "anthropic"
-    LLM_MODEL: str = "claude-haiku-4-5"
+    LLM_PROVIDER: Literal["openai", "anthropic", "ollama"] = "anthropic"
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5"
+    OPENAI_MODEL: str = "gpt-4o-mini"
     APP_ENV: str = "development"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
+
+    # Ollama — optional remote server
+    OLLAMA_API_BASE: str | None = None
+    OLLAMA_MODELS: str = "llama3.3:70b,deepseek-r1:70b"
 
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

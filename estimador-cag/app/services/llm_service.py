@@ -1,14 +1,12 @@
-# from openai import OpenAI
-import anthropic
 import json
 from collections.abc import AsyncIterator
 from app.config import get_settings
 from app.context.examples import ESTIMATION_EXAMPLES, format_examples
+from app.services.llm_router import router, default_model_name, infer_provider
 
 settings = get_settings()
-# client = OpenAI(api_key=settings.OPENAI_API_KEY)
-client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY) #Synchronous client
-async_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) #Asynchronous client
+MAX_TOKENS = 1500
+
 
 def build_system_prompt() -> str:
     examples_text = format_examples(ESTIMATION_EXAMPLES)
@@ -32,46 +30,56 @@ Tu estimación debe incluir:
 
 Usa EUR como moneda. Redondea las horas a múltiplos de 5."""
 
-async def generate_estimation(transcription: str) -> dict:
-    system_prompt = build_system_prompt()
-    
-    # response = client.chat.completions.create(
-    #     model=settings.LLM_MODEL,
-    #     messages=[
-    #         {"role": "system", "content": system_prompt},
-    #         {"role": "user", "content": transcription}
-    #     ]
-    # )
-    response = client.messages.create(
-        model=settings.LLM_MODEL,
-        system=system_prompt,
-        messages=[
-            {"role": "user", "content": transcription}
-        ],
-        max_tokens=1000
-    )
 
+async def generate_estimation(transcription: str) -> dict:
+    messages = [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": transcription},
+    ]
+    response = await router.acompletion(
+        model="estimator",
+        messages=messages,
+        max_tokens=MAX_TOKENS,
+    )
+    model = response.model or default_model_name()
     return {
-        "estimation": response.content[0].text,
-        "model": settings.LLM_MODEL,
-        "provider": settings.LLM_PROVIDER,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
+        "estimation": response.choices[0].message.content,
+        "model": model,
+        "provider": infer_provider(model),
+        "usage": {
+            "input_tokens": response.usage.prompt_tokens,
+            "output_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens,
+        },
     }
 
 
 async def stream_estimation(transcription: str) -> AsyncIterator[str]:
-    async with async_client.messages.stream(
-        model=settings.LLM_MODEL,
-        system=build_system_prompt(),
-        messages=[{"role": "user", "content": transcription}],
-        max_tokens=1000,
-    ) as stream:
-        async for text in stream.text_stream:
-            yield text
-        final = await stream.get_final_message()
-        yield "\x00" + json.dumps({
-            "model": settings.LLM_MODEL,
-            "input_tokens": final.usage.input_tokens,
-            "output_tokens": final.usage.output_tokens,
-        })
+    messages = [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": transcription},
+    ]
+    response = await router.acompletion(
+        model="estimator",
+        messages=messages,
+        max_tokens=MAX_TOKENS,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    model_used = default_model_name()
+
+    async for chunk in response:
+        if chunk.model:
+            model_used = chunk.model
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+        if getattr(chunk, "usage", None) is not None:
+            usage = {
+                "input_tokens": chunk.usage.prompt_tokens or 0,
+                "output_tokens": chunk.usage.completion_tokens or 0,
+                "total_tokens": chunk.usage.total_tokens or 0,
+            }
+
+    yield "\x00" + json.dumps({"model": model_used, **usage})

@@ -48,9 +48,10 @@ with st.sidebar:
     st.header("Metricas — ultima llamada")
     if st.session_state.last_metrics:
         m = st.session_state.last_metrics
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         col1.metric("Tokens entrada", m.get("input_tokens", "—"))
         col2.metric("Tokens salida", m.get("output_tokens", "—"))
+        col3.metric("Tokens total", m.get("total_tokens", "—"))
         st.metric("Tiempo de respuesta", f"{m.get('elapsed', 0):.2f} s")
         st.caption(f"Modelo: {m.get('model', '—')}")
     else:
@@ -100,10 +101,12 @@ if prompt := st.chat_input("Pega aqui la transcripcion o descripcion del proyect
                 response.raise_for_status()
                 data = response.json()
                 estimation = data["estimation"]
+                usage = data.get("usage", {})
                 st.session_state.last_metrics = {
                     "model": data.get("model", "—"),
-                    "input_tokens": data.get("input_tokens", "—"),
-                    "output_tokens": data.get("output_tokens", "—"),
+                    "input_tokens": usage.get("input_tokens", "—"),
+                    "output_tokens": usage.get("output_tokens", "—"),
+                    "total_tokens": usage.get("total_tokens", "—"),
                     "elapsed": time.perf_counter() - t0,
                 }
                 st.markdown(estimation)
