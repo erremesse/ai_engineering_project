@@ -3,8 +3,8 @@ import httpx
 import json
 import time
 import os
-from app.schemas.estimation import ProjectType, DetailLevel, OutputFormat
-from app.services.llm_service import build_system_prompt
+from app.schemas.estimation import EstimationRequest, ProjectType, DetailLevel, OutputFormat
+from app.prompts.loader import render_estimation_prompt
 from app.context.examples import ESTIMATION_EXAMPLES
 
 API_URL = os.getenv("ESTIMADOR_API_URL", "http://localhost:8000/api/v1/estimate")
@@ -62,14 +62,16 @@ with st.sidebar:
 
     fv = st.session_state.last_form_values
     st.header("System prompt activo")
+    _preview_request = EstimationRequest(
+        description="Esta es una descripcion de prueba para la vista previa del prompt.",
+        project_type=fv["project_type"],
+        detail_level=fv["detail_level"],
+        output_format=fv["output_format"],
+    )
+    _system_preview, _ = render_estimation_prompt(_preview_request)
     st.text_area(
         label="",
-        value=build_system_prompt(
-            fv["project_type"],
-            fv["detail_level"],
-            fv["output_format"],
-            n_examples,
-        ),
+        value=_system_preview,
         height=220,
         disabled=True,
         key="system_prompt_display",
