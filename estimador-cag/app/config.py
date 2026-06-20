@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # CAG context
     NUM_CAG_EXAMPLES: int = 5
 
+    # Cache
+    CACHE_TTL: int = 86_400  # seconds — 24 h default
+
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
