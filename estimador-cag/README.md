@@ -1,13 +1,14 @@
 # Estimador CAG
 
-Software project estimation service powered by LLMs. A FastAPI backend generates structured effort estimations from project descriptions using CAG (Context-Augmented Generation) with few-shot examples. A Streamlit frontend provides a form-based interface with real-time streaming support.
+Software project estimation service powered by LLMs. A FastAPI backend generates structured effort estimations from project descriptions using CAG (Context-Augmented Generation) with few-shot examples. A Streamlit frontend provides both a transactional (single-shot) and a conversational (multi-turn) interface with file attachment support.
 
 ## Stack
 
 - **Python 3.11+** / **FastAPI** / **Uvicorn**
-- **Streamlit** — web frontend with form input and streaming display
+- **Streamlit** — web frontend with transactional and conversational modes
 - **LiteLLM Router** — provider aggregator with automatic fallback chain
 - **Pydantic v2 + Pydantic Settings** for schemas and configuration
+- **pypdf / python-docx** — local text extraction from PDF and Word attachments (Camino B)
 
 ### Supported providers
 
@@ -44,7 +45,9 @@ cp .env.example .env
 | `NUM_CAG_EXAMPLES` | `5` | Default number of few-shot examples injected into the prompt |
 | `APP_ENV` | `development` | Runtime environment |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `ESTIMADOR_API_URL` | `http://localhost:8000/api/v1/estimate` | API base URL consumed by Streamlit |
+| `ESTIMADOR_API_BASE` | `http://localhost:8000` | Base URL of the FastAPI server, consumed by Streamlit |
+
+> **Migration note:** the old `ESTIMADOR_API_URL` variable (full path) has been replaced by `ESTIMADOR_API_BASE` (base URL only). Update your `.env` if you had it set explicitly.
 
 ## Run
 
@@ -61,7 +64,9 @@ streamlit run streamlit_app.py
 
 ## API endpoints
 
-### `POST /api/v1/estimate`
+### Transactional (single-shot, no session)
+
+#### `POST /api/v1/estimate`
 
 Generates an effort estimation (blocking).
 
@@ -90,42 +95,158 @@ Generates an effort estimation (blocking).
 ```json
 {
   "text": "## Estimation\n\n| Phase | Description | Hours | Cost (EUR) |\n...",
-  "prompt_version": "1.0",
+  "prompt_version": "v1",
   "model": "claude-haiku-4-5-20251001",
   "provider": "anthropic",
-  "usage": {
-    "input_tokens": 1842,
-    "output_tokens": 512,
-    "total_tokens": 2354
+  "usage": { "input_tokens": 1842, "output_tokens": 512, "total_tokens": 2354 }
+}
+```
+
+#### `POST /api/v1/estimate/stream`
+
+Same request body as above. Returns a plain-text stream of tokens. The final chunk is prefixed with `\x00` and contains a JSON object with `model`, `input_tokens`, `output_tokens`, and `total_tokens`.
+
+---
+
+### Conversational (multi-turn, with session)
+
+#### `POST /api/v1/sessions`
+
+Creates a new empty session. Returns `{"session_id": "<uuid4>"}` (HTTP 201).
+
+#### `GET /api/v1/sessions/{session_id}`
+
+Returns the current session state (useful for debugging):
+
+```json
+{
+  "session_id": "...",
+  "turn_count": 2,
+  "metadata": {
+    "project_name": "Portal RR.HH.",
+    "assumed_team_size": 3,
+    "mentioned_technologies": ["react", "fastapi", "postgresql"],
+    "agreed_scope": "Aplicacion web interna para gestion de..."
   }
 }
 ```
 
-### `POST /api/v1/estimate/stream`
+#### `POST /api/v1/sessions/{session_id}/estimate`
 
-Same request body as above. Returns a plain-text stream of tokens. The final chunk is prefixed with `\x00` and contains a JSON object with `model`, `input_tokens`, `output_tokens`, and `total_tokens`.
+Multi-turn estimation endpoint. Accepts `multipart/form-data`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transcript` | `string` (Form) | Project description or turn text (20–2000 chars) |
+| `project_type` | enum (Form) | Same values as transactional endpoint |
+| `detail_level` | enum (Form) | Same values as transactional endpoint |
+| `output_format` | enum (Form) | Same values as transactional endpoint |
+| `n_examples` | `int` (Form, optional) | Number of CAG examples |
+| `attachments` | `UploadFile[]` (File, optional) | PDF or DOCX files |
+
+The response extends the transactional response with session state:
+
+```json
+{
+  "text": "...",
+  "prompt_version": "v1",
+  "model": "claude-haiku-4-5-20251001",
+  "provider": "anthropic",
+  "usage": { "input_tokens": 2100, "output_tokens": 640, "total_tokens": 2740 },
+  "session_id": "...",
+  "turn_count": 2,
+  "metadata": { ... }
+}
+```
+
+---
 
 ### `GET /health`
 
 Returns `{"status": "healthy"}`.
+
+## Conversational memory design
+
+### Sliding window
+
+The service keeps the last `MAX_TURNS = 6` user/assistant pairs per session (configurable). Older turns are discarded when the limit is exceeded. The system prompt is regenerated on every turn to reflect the latest `project_metadata`, so it is never stored as part of the history.
+
+### project_metadata
+
+A separate `ProjectMetadata` object accumulates facts about the project across turns, independent of the message history:
+
+| Field | How it is populated |
+| --- | --- |
+| `project_name` | First regex match on the user transcript (immutable once set) |
+| `assumed_team_size` | First numeric mention of team size (immutable once set) |
+| `mentioned_technologies` | Cumulative union across all turns |
+| `agreed_scope` | First 400 chars of the first user transcript (immutable once set) |
+
+**Extraction strategy: heurística simple (regex).** A second LLM call per turn was considered but rejected: it adds latency and token cost with limited benefit at this stage. The heuristic is cheaper, predictable, and sufficient for the current phase. A LLM-based extractor would be the next step if precision becomes a bottleneck.
+
+### Session storage
+
+Sessions are stored in an in-memory dictionary (`SessionStore`). There is no database or Redis backend. **Sessions are lost on server restart.** This is an accepted trade-off for this phase: the goal is to explore conversational patterns, not to build a production-grade persistence layer.
+
+## File attachments (Camino B — local extraction)
+
+PDF and DOCX files uploaded via `attachments` are processed locally before the LLM call:
+
+- **PDF** — text extracted page by page with `pypdf`.
+- **DOCX** — paragraphs extracted with `python-docx`.
+
+Each attachment is appended to the user message with a clear separator:
+
+```text
+--- attachment: spec.pdf ---
+<extracted text>
+```
+
+**Why Camino B instead of Camino A (Files API)?**
+
+- Provider-agnostic: works with any LLM in the router, not just multimodal ones.
+- No per-file token overhead from binary encoding.
+- Prepares the ground for chunking and RAG in future phases.
 
 ## Project structure
 
 ```text
 estimador-cag/
 ├── app/
-│   ├── main.py                  # FastAPI app entry point
-│   ├── config.py                # Settings (Pydantic Settings + .env)
+│   ├── main.py                      # FastAPI app entry point
+│   ├── config.py                    # Settings (Pydantic Settings + .env)
 │   ├── routers/
-│   │   └── estimations.py       # /estimate and /estimate/stream routes
+│   │   ├── estimations.py           # /estimate and /estimate/stream (transactional)
+│   │   └── sessions.py              # /sessions and /sessions/{id}/estimate (conversational)
 │   ├── schemas/
-│   │   └── estimation.py        # Request/response Pydantic models and enums
+│   │   ├── estimation.py            # Transactional request/response models and enums
+│   │   └── sessions.py              # Session response models
 │   ├── services/
-│   │   ├── llm_router.py        # LiteLLM Router configuration and provider helpers
-│   │   └── llm_service.py       # Prompt building, generate_estimation, stream_estimation
+│   │   ├── llm_router.py            # LiteLLM Router configuration and provider helpers
+│   │   ├── llm_service.py           # generate_estimation, stream_estimation, generate_from_messages
+│   │   ├── cache.py                 # ExactMatchCache (SHA-256, TTL-based)
+│   │   └── attachment_service.py    # PDF/DOCX text extraction (AttachmentService)
+│   ├── sessions/
+│   │   ├── models.py                # ProjectMetadata, ConversationHistory, Session
+│   │   ├── store.py                 # SessionStore (in-memory singleton)
+│   │   ├── metadata.py              # MetadataExtractor (heuristic, regex-based)
+│   │   └── __init__.py              # Public re-exports
+│   ├── prompts/
+│   │   ├── loader.py                # render_estimation_prompt, render_session_prompt
+│   │   └── estimation/v1/
+│   │       ├── system.j2            # System prompt (with optional project_context block)
+│   │       ├── user.j2              # User prompt wrapper
+│   │       └── examples.j2          # CAG examples formatter
 │   └── context/
-│       └── examples.py          # Few-shot CAG examples
-├── streamlit_app.py             # Streamlit frontend
+│       └── examples.py              # Five few-shot CAG examples
+├── tests/
+│   ├── cache/
+│   │   └── test_exact_match.py      # Unit tests for ExactMatchCache
+│   ├── prompts/
+│   │   └── test_estimation_v1.py    # Unit tests for prompt templates
+│   └── sessions/
+│       └── test_sessions.py         # Integration tests for conversational flow
+├── streamlit_app.py                 # Streamlit frontend (transactional + conversational modes)
 └── pyproject.toml
 ```
 

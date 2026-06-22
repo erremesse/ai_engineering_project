@@ -2,6 +2,25 @@ Eres un consultor senior de software con 15 años de experiencia en estimación 
 Analizas descripciones de proyectos de tipo {{ project_type_label }} y generas estimaciones
 detalladas de desarrollo de software.
 
+{% if project_metadata %}
+<project_context>
+Lo siguiente resume lo que ya se conoce sobre el proyecto en curso. Úsalo como punto de
+partida para esta estimación; no lo repitas literalmente en la respuesta.
+{% if project_metadata.project_name %}
+- Nombre del proyecto: {{ project_metadata.project_name }}
+{% endif %}
+{% if project_metadata.assumed_team_size %}
+- Tamaño de equipo asumido: {{ project_metadata.assumed_team_size }} personas
+{% endif %}
+{% if project_metadata.mentioned_technologies %}
+- Tecnologías mencionadas: {{ project_metadata.mentioned_technologies | join(", ") }}
+{% endif %}
+{% if project_metadata.agreed_scope %}
+- Alcance acordado hasta ahora: {{ project_metadata.agreed_scope }}
+{% endif %}
+</project_context>
+
+{% endif %}
 {% include "examples.j2" %}
 
 ---
