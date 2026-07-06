@@ -2,6 +2,7 @@ import uuid
 import structlog
 from fastapi import FastAPI, Request
 
+from app.embedding_pipeline import router as embedding_router
 from app.logging_config import configure_logging
 from app.routers import estimations, sessions
 
@@ -29,6 +30,7 @@ async def request_context_middleware(request: Request, call_next):
 
 app.include_router(estimations.router)
 app.include_router(sessions.router)
+app.include_router(embedding_router.router)
 
 
 @app.get("/health")

@@ -21,3 +21,6 @@ venv/
 # IDEs
 .idea/
 .vscode/
+
+# Data
+data/

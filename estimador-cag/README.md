@@ -42,6 +42,8 @@ cp .env.example .env
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model identifier |
 | `OLLAMA_API_BASE` | — | Base URL for Ollama server, e.g. `http://host:11434` |
 | `OLLAMA_MODELS` | `llama3.3:70b,deepseek-r1:70b` | Comma-separated list of Ollama models (first is primary) |
+| `EMBEDDING_PROVIDER` | `openai` | Embeddings backend: `openai` (`text-embedding-3-small`) or `ollama` (local/remote model) |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model name, used when `EMBEDDING_PROVIDER=ollama` (served by `OLLAMA_API_BASE`) |
 | `NUM_CAG_EXAMPLES` | `5` | Default number of few-shot examples injected into the prompt |
 | `APP_ENV` | `development` | Runtime environment |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -165,6 +167,84 @@ The response extends the transactional response with session state:
 
 Returns `{"status": "healthy"}`.
 
+---
+
+### Embeddings
+
+#### `POST /embeddings/ingest`
+
+Splits historical budgets into chunks (one component = one chunk) and generates embeddings
+for each of them. Vectors are returned in the response — nothing is persisted yet (that
+lands in Session 08 with PostgreSQL + pgvector).
+
+##### Ingest request body
+
+```json
+{
+  "budgets": [ /* array of budgets, same schema as data/budgets_sample.json */ ]
+}
+```
+
+##### Ingest response body
+
+```json
+{
+  "chunks": [
+    {
+      "chunk_id": "BUD-2024-001::AUTH-001",
+      "text": "[Project: Mobile banking API...]\n[Client sector: finance | Year: 2024 | Main tech: ruby_on_rails]\n\nComponent: OAuth 2.0 authentication backend\n...",
+      "metadata": {
+        "budget_id": "BUD-2024-001",
+        "component_id": "AUTH-001",
+        "client_sector": "finance",
+        "main_technology": "ruby_on_rails",
+        "year": 2024,
+        "complexity": "high",
+        "estimated_hours": 120
+      },
+      "token_count": 106,
+      "embedding": [0.0123, -0.0456, "... 1536 floats with OpenAI / 768 with nomic-embed-text ..."]
+    }
+  ],
+  "stats": {
+    "total_budgets": 1,
+    "total_chunks": 4,
+    "total_tokens": 480,
+    "estimated_cost_usd": 0.0000096
+  }
+}
+```
+
+`estimated_cost_usd` is always `0.0` when `EMBEDDING_PROVIDER=ollama` (local/self-hosted model).
+
+Status codes: `200` on success, `422` on Pydantic validation errors, `500` if the embeddings
+backend call fails (generic message to the client, full detail in the logs).
+
+#### `scripts/compare.py` — embedding sanity check CLI
+
+Standalone script that embeds two texts and prints their cosine similarity (computed by
+hand — no `numpy`/`scikit-learn`). It reuses the same `Embedder` configured via
+`EMBEDDING_PROVIDER`.
+
+```bash
+# Locally, with .env loaded (project has no Docker setup yet — see note below)
+uv run python scripts/compare.py --text-a "OAuth 2.0 authentication backend for fintech" --text-b "JWT-based authorization service for banking app"
+```
+
+```text
+Text A: OAuth 2.0 authentication backend for fintech
+Text B: JWT-based authorization service for banking app
+Cosine similarity: 0.6979
+```
+
+> **Docker note:** this project currently runs locally via `uv`/`uvicorn` (no `Dockerfile` /
+> `docker-compose.yml` yet). Containerizing the service — and adding the equivalent
+> `docker compose exec servicio_ia python scripts/compare.py ...` invocation — is pending
+> future work.
+
+Results for the three validation pairs required by the exercise, plus commentary, are in
+[`app/embedding_pipeline/SANITY_CHECK.md`](app/embedding_pipeline/SANITY_CHECK.md).
+
 ## Conversational memory design
 
 ### Sliding window
@@ -237,8 +317,18 @@ estimador-cag/
 │   │       ├── system.j2            # System prompt (with optional project_context block)
 │   │       ├── user.j2              # User prompt wrapper
 │   │       └── examples.j2          # CAG examples formatter
-│   └── context/
-│       └── examples.py              # Five few-shot CAG examples
+│   ├── context/
+│   │   └── examples.py              # Five few-shot CAG examples
+│   └── embedding_pipeline/
+│       ├── schemas.py               # Budget, Chunk, EmbeddedChunk, Ingest request/response models
+│       ├── chunker.py                # JSONStructuralChunker — one budget component = one chunk
+│       ├── embedder.py               # Embedder (OpenAI / Ollama), get_embedder() factory
+│       ├── router.py                  # POST /embeddings/ingest
+│       └── SANITY_CHECK.md           # Cosine similarity results for the 3 validation pairs
+├── scripts/
+│   └── compare.py                    # CLI: cosine similarity between two embedded texts
+├── data/
+│   └── budgets_sample.json           # 15 sample historical budgets used by embedding_pipeline
 ├── tests/
 │   ├── cache/
 │   │   └── test_exact_match.py      # Unit tests for ExactMatchCache
