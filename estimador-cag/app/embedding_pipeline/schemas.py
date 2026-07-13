@@ -57,22 +57,58 @@ class EmbeddedChunk(Chunk):
 
 
 class IngestRequest(BaseModel):
-    """Payload de entrada del endpoint de ingesta."""
+    """Payload de entrada del endpoint de ingesta. Un request = un documento."""
 
-    budgets: list[Budget] = Field(description="Presupuestos historicos a trocear y vectorizar.")
-
-
-class IngestStats(BaseModel):
-    """Estadisticas agregadas de una ingesta."""
-
-    total_budgets: int = Field(description="Numero de presupuestos procesados.")
-    total_chunks: int = Field(description="Numero de chunks generados.")
-    total_tokens: int = Field(description="Numero total de tokens embebidos.")
-    estimated_cost_usd: float = Field(description="Coste estimado en USD de la llamada al modelo de embeddings.")
+    source_path: str = Field(
+        min_length=1, description="Procedencia del documento, unica por ingesta (source_path)."
+    )
+    document_type: str = Field(
+        min_length=1, max_length=50, description="Familia del documento, ej. 'historical_budget'."
+    )
+    content: Budget = Field(description="JSON completo del presupuesto, tal cual viene del chunker.")
 
 
 class IngestResponse(BaseModel):
-    """Payload de salida del endpoint de ingesta."""
+    """Payload de salida del endpoint de ingesta. Los vectores ya no viajan por HTTP: quedan persistidos."""
 
-    chunks: list[EmbeddedChunk] = Field(description="Chunks vectorizados.")
-    stats: IngestStats = Field(description="Estadisticas agregadas de la ingesta.")
+    document_id: int = Field(description="Clave primaria del document persistido.")
+    chunks_created: int = Field(ge=0, description="Numero de chunks persistidos para este documento.")
+    embedding_dimension: int = Field(description="Dimensionalidad de los vectores almacenados.")
+    ingestion_time_ms: int = Field(ge=0, description="Tiempo total de la ingesta, en milisegundos.")
+
+
+class IngestStats(BaseModel):
+    """Estadisticas de una ingesta que ya no viajan en la respuesta HTTP (contrato fijo del
+    ejercicio) pero se conservan logueadas de forma estructurada para observabilidad."""
+
+    document_id: int = Field(description="Clave primaria del document persistido.")
+    chunks_created: int = Field(ge=0, description="Numero de chunks persistidos.")
+    total_tokens: int = Field(ge=0, description="Numero total de tokens embebidos.")
+    estimated_cost_usd: float = Field(description="Coste estimado en USD de la llamada al modelo de embeddings.")
+
+
+class SearchRequest(BaseModel):
+    """Payload de entrada del endpoint de busqueda semantica."""
+
+    query: str = Field(min_length=1, description="Consulta en lenguaje natural.")
+    k: int = Field(default=5, ge=1, le=50, description="Numero de chunks mas cercanos a devolver.")
+
+
+class SearchHit(BaseModel):
+    """Un chunk devuelto por la busqueda, con su distancia a la query."""
+
+    chunk_id: int = Field(description="Clave primaria del chunk.")
+    document_id: int = Field(description="Clave primaria del document al que pertenece.")
+    chunk_type: str = Field(description="Tipo de chunk, ej. 'budget_component'.")
+    content: str = Field(description="Texto del chunk.")
+    distance: float = Field(description="Distancia coseno a la query (menor = mas similar).")
+    metadata: dict = Field(description="Metadata filtrable asociada al chunk.")
+
+
+class SearchResponse(BaseModel):
+    """Payload de salida del endpoint de busqueda semantica."""
+
+    query: str = Field(description="Consulta original.")
+    k: int = Field(description="Numero de resultados solicitados.")
+    search_time_ms: int = Field(ge=0, description="Tiempo total de la busqueda, en milisegundos.")
+    results: list[SearchHit] = Field(description="Chunks mas cercanos, ordenados por distancia ascendente.")

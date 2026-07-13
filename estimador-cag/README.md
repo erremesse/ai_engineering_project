@@ -9,6 +9,7 @@ Software project estimation service powered by LLMs. A FastAPI backend generates
 - **LiteLLM Router** — provider aggregator with automatic fallback chain
 - **Pydantic v2 + Pydantic Settings** for schemas and configuration
 - **pypdf / python-docx** — local text extraction from PDF and Word attachments (Camino B)
+- **PostgreSQL + pgvector** (`pgvector/pgvector:pg16`) — vector persistence, via **SQLAlchemy 2.0** (async, `asyncpg`) and **Alembic** migrations
 
 ### Supported providers
 
@@ -44,14 +45,28 @@ cp .env.example .env
 | `OLLAMA_MODELS` | `llama3.3:70b,deepseek-r1:70b` | Comma-separated list of Ollama models (first is primary) |
 | `EMBEDDING_PROVIDER` | `openai` | Embeddings backend: `openai` (`text-embedding-3-small`) or `ollama` (local/remote model) |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model name, used when `EMBEDDING_PROVIDER=ollama` (served by `OLLAMA_API_BASE`) |
+| `EMBEDDING_DIMENSION` | `1536` | Dimension of the configured embedding model — must be kept in sync manually: `1536` for `text-embedding-3-small`, `768` for `nomic-embed-text` (see [Decisiones de schema](#decisiones-de-schema-sesión-08)) |
+| `DATABASE_URL` | `postgresql+asyncpg://estimator:estimator@localhost:5432/estimator` | Async Postgres connection string (pgvector persistence). Overridden by `docker-compose.yml` to the in-network host |
 | `NUM_CAG_EXAMPLES` | `5` | Default number of few-shot examples injected into the prompt |
 | `APP_ENV` | `development` | Runtime environment |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `ESTIMADOR_API_BASE` | `http://localhost:8000` | Base URL of the FastAPI server, consumed by Streamlit |
+| `ESTIMADOR_API_BASE` | `http://localhost:8000` | Base URL of the FastAPI server, consumed by Streamlit (host perspective) |
 
 > **Migration note:** the old `ESTIMADOR_API_URL` variable (full path) has been replaced by `ESTIMADOR_API_BASE` (base URL only). Update your `.env` if you had it set explicitly.
 
 ## Run
+
+### With Docker (recommended — includes Postgres + pgvector)
+
+```bash
+docker compose up -d
+docker compose run --rm ai_service alembic upgrade head   # first run only
+```
+
+- API docs: `http://localhost:8000/docs`
+- Postgres: `localhost:5432` (`estimator` / `estimator` / `estimator`)
+
+### Locally (no Postgres — `/embeddings/ingest` and `/search` need it)
 
 ```bash
 # Start FastAPI backend
@@ -169,19 +184,26 @@ Returns `{"status": "healthy"}`.
 
 ---
 
-### Embeddings
+### Embeddings and semantic search (Session 08 — pgvector persistence)
+
+Historical budgets are split into chunks (one component = one chunk), embedded, and
+persisted in PostgreSQL + pgvector. Session 07 returned vectors over HTTP without
+persisting anything; **since Session 08 `/embeddings/ingest` persists to the database**
+and `/search` runs real semantic retrieval against it.
 
 #### `POST /embeddings/ingest`
 
-Splits historical budgets into chunks (one component = one chunk) and generates embeddings
-for each of them. Vectors are returned in the response — nothing is persisted yet (that
-lands in Session 08 with PostgreSQL + pgvector).
+One request ingests **one document** (one historical budget) — chunk → embed → persist,
+all inside a single async transaction. If the embeddings call fails, the whole transaction
+rolls back: no orphan `documents` row survives.
 
 ##### Ingest request body
 
 ```json
 {
-  "budgets": [ /* array of budgets, same schema as data/budgets_sample.json */ ]
+  "source_path": "data/budgets_sample.json::BUD-2024-001",
+  "document_type": "historical_budget",
+  "content": { /* one budget object, same schema as data/budgets_sample.json items */ }
 }
 ```
 
@@ -189,61 +211,118 @@ lands in Session 08 with PostgreSQL + pgvector).
 
 ```json
 {
-  "chunks": [
-    {
-      "chunk_id": "BUD-2024-001::AUTH-001",
-      "text": "[Project: Mobile banking API...]\n[Client sector: finance | Year: 2024 | Main tech: ruby_on_rails]\n\nComponent: OAuth 2.0 authentication backend\n...",
-      "metadata": {
-        "budget_id": "BUD-2024-001",
-        "component_id": "AUTH-001",
-        "client_sector": "finance",
-        "main_technology": "ruby_on_rails",
-        "year": 2024,
-        "complexity": "high",
-        "estimated_hours": 120
-      },
-      "token_count": 106,
-      "embedding": [0.0123, -0.0456, "... 1536 floats with OpenAI / 768 with nomic-embed-text ..."]
-    }
-  ],
-  "stats": {
-    "total_budgets": 1,
-    "total_chunks": 4,
-    "total_tokens": 480,
-    "estimated_cost_usd": 0.0000096
-  }
+  "document_id": 1,
+  "chunks_created": 4,
+  "embedding_dimension": 768,
+  "ingestion_time_ms": 1240
 }
 ```
 
-`estimated_cost_usd` is always `0.0` when `EMBEDDING_PROVIDER=ollama` (local/self-hosted model).
+`embedding_dimension` reflects `EMBEDDING_DIMENSION` (see [Decisiones de schema](#decisiones-de-schema-sesión-08) below) — `1536` with `EMBEDDING_PROVIDER=openai` (`text-embedding-3-small`), `768` with `EMBEDDING_PROVIDER=ollama` (`nomic-embed-text`).
 
-Status codes: `200` on success, `422` on Pydantic validation errors, `500` if the embeddings
-backend call fails (generic message to the client, full detail in the logs).
+Token/cost stats (`total_tokens`, `estimated_cost_usd`) no longer travel in the HTTP
+response — the exercise's response contract is fixed to the four fields above — but they
+are not lost: they land in the `embedding_ingest_completed` structured log event.
 
-#### `scripts/compare.py` — embedding sanity check CLI
+Status codes:
 
-Standalone script that embeds two texts and prints their cosine similarity (computed by
-hand — no `numpy`/`scikit-learn`). It reuses the same `Embedder` configured via
-`EMBEDDING_PROVIDER`.
+| Code | Meaning |
+| --- | --- |
+| `200` | Ingested successfully. |
+| `409` | A document with the same `source_path` already exists: `{"detail": "Document already ingested", "document_id": 42}`. |
+| `422` | Pydantic validation error (malformed budget JSON). |
+| `500` | Embeddings backend call failed (generic message to the client, full detail in the logs). |
+
+#### `POST /search`
+
+Embeds the query with the same model used at ingest time and ranks chunks by cosine
+distance (`<=>` operator) via SQL — no vector index yet (see below), so this is a
+sequential scan.
+
+##### Search request body
+
+```json
+{ "query": "REST API with OAuth authentication for fintech sector", "k": 5 }
+```
+
+##### Search response body
+
+```json
+{
+  "query": "REST API with OAuth authentication for fintech sector",
+  "k": 5,
+  "search_time_ms": 87,
+  "results": [
+    {
+      "chunk_id": 1,
+      "document_id": 1,
+      "chunk_type": "budget_component",
+      "content": "[Project: Mobile banking API...]\n\nComponent: OAuth 2.0 authentication backend...",
+      "distance": 0.2851,
+      "metadata": { "budget_id": "BUD-2024-001", "client_sector": "finance", "complexity": "high" }
+    }
+  ]
+}
+```
+
+#### `scripts/query_examples.py` — semantic search smoke test
+
+Replaces Session 07's `compare.py` (which measured similarity between two loose texts).
+Instead it exercises the real retrieval path over HTTP: ingests `data/budgets_sample.json`
+(one document per budget, idempotent — already-ingested documents answer `409` and are
+skipped) and then runs five queries that probe the corpus from different angles (direct
+match, semantic reformulation, out-of-domain, ambiguous, highly specific).
 
 ```bash
-# Locally, with .env loaded (project has no Docker setup yet — see note below)
-uv run python scripts/compare.py --text-a "OAuth 2.0 authentication backend for fintech" --text-b "JWT-based authorization service for banking app"
+docker compose up -d
+docker compose run --rm ai_service python scripts/query_examples.py
 ```
 
-```text
-Text A: OAuth 2.0 authentication backend for fintech
-Text B: JWT-based authorization service for banking app
-Cosine similarity: 0.6979
-```
+The real output against the sample corpus (15 budgets, `EMBEDDING_PROVIDER=ollama`) is in
+[`output_examples.txt`](output_examples.txt).
 
-> **Docker note:** this project currently runs locally via `uv`/`uvicorn` (no `Dockerfile` /
-> `docker-compose.yml` yet). Containerizing the service — and adding the equivalent
-> `docker compose exec servicio_ia python scripts/compare.py ...` invocation — is pending
-> future work.
+### Decisiones de schema (Sesión 08)
 
-Results for the three validation pairs required by the exercise, plus commentary, are in
-[`app/embedding_pipeline/SANITY_CHECK.md`](app/embedding_pipeline/SANITY_CHECK.md).
+Dos tablas gestionadas con Alembic (`alembic/versions/0001_initial_schema.py`):
+`documents` (procedencia: `source_path`, `document_type`, `ingested_at`, `metadata` JSONB)
+y `chunks` (`content`, `embedding vector`, `metadata` JSONB), con `ON DELETE CASCADE`.
+
+- **Dos tablas y no una.** Un presupuesto produce N chunks: es un uno-a-muchos real. Una
+  tabla única duplicaría la metadata del documento en cada fila y perdería integridad
+  referencial. Con `ON DELETE CASCADE`, borrar un presupuesto elimina automáticamente
+  todos sus chunks.
+- **`metadata` como JSONB y no columnas tipadas.** Lo estable (tipo de documento, tipo de
+  chunk, fechas) va en columnas tipadas; lo que el chunker puede enriquecer (sector,
+  tecnologías, horas estimadas) va a JSONB. El índice GIN (`ix_chunks_metadata_gin`)
+  permite consultar por claves arbitrarias sin una migración por cada clave nueva.
+- **`cosine_distance` y no L2 ni inner product.** Los embeddings vienen normalizados
+  (tanto `text-embedding-3-small` como `nomic-embed-text`), así que el ranking sería
+  equivalente con cualquiera de los tres; usamos coseno por convención de la literatura
+  RAG y, sobre todo, para quedar alineados con la operator class `vector_cosine_ops` del
+  índice HNSW que se añadirá en el directo — si la query usa un operador y el índice está
+  construido con otra operator class, Postgres ignora el índice **en silencio** y cae a
+  sequential scan.
+- **Sin índice vectorial todavía (deliberado).** El sequential scan es el baseline contra
+  el que el directo mide el impacto de HNSW/IVFFlat. Añadirlo ahora ocultaría justamente
+  lo que se quiere observar en vivo.
+- **`embedding` nullable.** Permite insertar el chunk y rellenar el vector después
+  (ingesta asíncrona, sesiones futuras). Aquí chunk + embedding se escriben de forma
+  atómica en una sola transacción.
+- **`vector(EMBEDDING_DIMENSION)` configurable, no `vector(1536)` hardcodeado.** El
+  enunciado pide hardcodear la dimensionalidad de `text-embedding-3-small` (1536), pero
+  este proyecto ya traía `EMBEDDING_PROVIDER=ollama` (`nomic-embed-text`, 768 dims)
+  configurado desde la Sesión 07 sin una `OPENAI_API_KEY` real disponible. Hardcodear 1536
+  habría roto la migración contra el proveedor realmente configurado. En su lugar,
+  `Settings.EMBEDDING_DIMENSION` (leída en `app/embedding_pipeline/models.py` y en la
+  migración) fija la dimensión según el proveedor activo — **desviación deliberada del
+  enunciado**, documentada aquí en vez de escondida. La compensación no es gratis: cambiar
+  de proveedor sigue exigiendo una migración nueva y re-embeber todo el corpus, exactamente
+  igual que con un valor hardcodeado; solo cambia dónde vive el número (variable de
+  entorno vs. código).
+
+**Fuera de scope (se construye en el directo):** índices vectoriales (HNSW/IVFFlat),
+filtros por metadata en SQL, búsqueda híbrida (full-text + vector) y tuning de Postgres
+(`shared_buffers`, `maintenance_work_mem`, `ef_search`).
 
 ## Conversational memory design
 
@@ -295,6 +374,9 @@ estimador-cag/
 ├── app/
 │   ├── main.py                      # FastAPI app entry point
 │   ├── config.py                    # Settings (Pydantic Settings + .env)
+│   ├── db/
+│   │   ├── base.py                  # Declarative Base shared by all ORM models
+│   │   └── session.py               # Async engine, session factory, get_session dependency
 │   ├── routers/
 │   │   ├── estimations.py           # /estimate and /estimate/stream (transactional)
 │   │   └── sessions.py              # /sessions and /sessions/{id}/estimate (conversational)
@@ -320,15 +402,25 @@ estimador-cag/
 │   ├── context/
 │   │   └── examples.py              # Five few-shot CAG examples
 │   └── embedding_pipeline/
-│       ├── schemas.py               # Budget, Chunk, EmbeddedChunk, Ingest request/response models
+│       ├── schemas.py               # Budget, Chunk, EmbeddedChunk, Ingest/Search request/response models
 │       ├── chunker.py                # JSONStructuralChunker — one budget component = one chunk
 │       ├── embedder.py               # Embedder (OpenAI / Ollama), get_embedder() factory
-│       ├── router.py                  # POST /embeddings/ingest
-│       └── SANITY_CHECK.md           # Cosine similarity results for the 3 validation pairs
+│       ├── models.py                 # Document, Chunk ORM models (pgvector)
+│       ├── store.py                  # ChunkStore — async repository (find/persist/search)
+│       ├── router.py                  # POST /embeddings/ingest, POST /search
+│       └── SANITY_CHECK.md           # Cosine similarity results for the 3 validation pairs (Session 07)
+├── alembic/
+│   ├── env.py                        # Reads DATABASE_URL from Settings, registers the vector type
+│   └── versions/
+│       └── 0001_initial_schema.py    # CREATE EXTENSION vector + documents/chunks tables
+├── alembic.ini
+├── Dockerfile                         # ai_service image (uv + uvicorn)
+├── docker-compose.yml                 # postgres (pgvector/pgvector:pg16) + ai_service
 ├── scripts/
-│   └── compare.py                    # CLI: cosine similarity between two embedded texts
+│   └── query_examples.py             # CLI: ingests the sample corpus, runs 5 semantic search queries
 ├── data/
 │   └── budgets_sample.json           # 15 sample historical budgets used by embedding_pipeline
+├── output_examples.txt               # Real output of query_examples.py against the sample corpus
 ├── tests/
 │   ├── cache/
 │   │   └── test_exact_match.py      # Unit tests for ExactMatchCache

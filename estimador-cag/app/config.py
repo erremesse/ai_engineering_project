@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # Embeddings (embedding_pipeline)
     EMBEDDING_PROVIDER: Literal["openai", "ollama"] = "openai"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
+    # Dimension of the configured embedding model. text-embedding-3-small -> 1536,
+    # nomic-embed-text -> 768. Must match EMBEDDING_PROVIDER/OLLAMA_EMBEDDING_MODEL —
+    # changing it after data has been ingested requires a new migration and re-embedding
+    # the whole corpus (see README, "por que no vector(1536) hardcodeado").
+    EMBEDDING_DIMENSION: int = 1536
+
+    # Database (pgvector persistence)
+    DATABASE_URL: str = "postgresql+asyncpg://estimator:estimator@localhost:5432/estimator"
 
     # CAG context
     NUM_CAG_EXAMPLES: int = 5
