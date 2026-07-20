@@ -1,0 +1,16 @@
+Transcripción de reunión de descubrimiento — Clínica Row
+Asistentes: Javier Roldán (Gerente, Clínica Row — grupo de clínicas de fisioterapia y rehabilitación) · Consultor ITA
+
+Consultor: Buenas Javier, cuéntanos un poco cómo va todo.
+Javier: Pues mira, liados. Tenemos seis centros abiertos ya y estamos peleados con el proveedor actual del software de gestión, llevamos año y medio de mal en peor, cada vez que pedimos un cambio nos cobran una barbaridad y tardan meses.
+Consultor: Vaya, lo siento. ¿Y qué es exactamente lo que os falla?
+Javier: De todo un poco. A veces es la facturación, que no cuadra con lo que hemos hecho ese mes. Otras veces es que el sistema de turnos de los fisios se cae los lunes por la mañana, que es cuando más gente llama. Y luego está el tema de que no tenemos ni idea de cómo va la competencia, hay una clínica nueva al lado de nuestro centro de Zaragoza que nos está quitando pacientes, no sé si eso también nos lo podéis ayudar a mirar de alguna forma.
+Consultor: Vamos por partes. ¿Qué querríais construir vosotros, más allá de sustituir el software actual?
+Javier: Ya, perdona, me voy por las ramas. A ver, lo que tenemos más claro es que nos gustaría dar la opción a los pacientes de reservar cita ellos mismos desde el móvil y, si hace falta, tener una consulta de seguimiento por videollamada para pacientes que viven lejos o que no pueden desplazarse tras una operación, sin tener que venir físicamente cada semana solo para que el fisio les pregunte cómo va la recuperación.
+Consultor: Eso ya es más concreto. ¿Algo de seguimiento de la evolución del paciente?
+Javier: Sí, eso también, aunque no sé si es para esta fase o para más adelante. Nos gustaría que si un paciente registra dolor muy alto varios días seguidos en la app, alguien del equipo se entere y le llame, en vez de enterarnos en la siguiente cita presencial tres semanas después.
+Consultor: ¿Manejáis historiales clínicos en algún sistema concreto?
+Javier: Uy, eso es otro melón. Tenemos historiales en el sistema viejo, en Excel en un par de centros que se resisten al cambio, y creo que en uno de ellos todavía hay papel. No sé cómo de compatible es eso con lo que nos propongáis.
+Consultor: ¿Y el tema de marketing y captación que mencionabas antes?
+Javier: Sí, eso nos preocupa, pero honestamente es secundario, era más un comentario de pasada. Lo importante ahora es lo de las citas y el seguimiento remoto de pacientes.
+Consultor: Entendido, nos hacemos una idea. Seguimos hablando la semana que viene con más calma sobre alcance y plazos.

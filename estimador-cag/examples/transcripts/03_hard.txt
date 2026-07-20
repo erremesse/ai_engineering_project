@@ -1,0 +1,15 @@
+Transcripción de reunión de descubrimiento — Almacenes Ferro
+Asistentes: Cristina Bermejo (Directora de Operaciones, Almacenes Ferro) · Consultor ITA
+
+Consultor: Cristina, cuéntanos qué os traéis entre manos.
+Cristina: Pues igual os suena raro, pero no tenemos del todo decidido qué construir primero. Tenemos un almacén de doce mil metros cuadrados y ahora mismo todo el picking es manual, con carretillas y operarios con PDA antiguas que se quedan sin batería a media jornada.
+Consultor: ¿Estáis pensando en digitalizar el almacén?
+Cristina: Sí, esa es una opción. Meter sensores en las carretillas y en las estanterías para saber en tiempo real dónde está cada palet, y quizá más adelante automatizar parte del picking con vehículos guiados, como hemos visto en algún almacén de un cliente vuestro.
+Consultor: ¿Y la parte de venta? Porque también nos comentasteis algo de una tienda online.
+Cristina: Ah sí, eso también. Nosotros ahora vendemos solo a otras empresas, por catálogo en PDF y pedidos por email, que la verdad da un poco de vergüenza. Nos gustaría tener un portal donde los clientes vean stock y precios y hagan pedidos ellos mismos.
+Consultor: Entonces, ¿el proyecto es el almacén, el portal, o los dos?
+Cristina: Es que no lo tenemos claro todavía, por eso quería hablar con vosotros. Al principio pensábamos que lo prioritario era el portal, porque es lo que más rabia nos da perder ventas, pero cuando hemos hecho números nos hemos dado cuenta de que si no arreglamos el almacén no vamos a poder cumplir los pedidos que entren por el portal, así que a lo mejor hay que empezar por ahí.
+Consultor: ¿Y el tema de las carretillas con sensores, es para mantenimiento predictivo o para localización?
+Cristina: Buena pregunta... las dos cosas, supongo. Nos preocupa que se nos rompan a media jornada sin avisar, pero también queremos saber dónde está cada cosa. Aunque igual eso ya es pedir demasiado para una primera fase.
+Consultor: ¿Tenéis fecha en la que necesitéis tener algo funcionando?
+Cristina: Pues no exactamente. Antes decíamos que para la campaña de otoño, pero llevamos ya dos reuniones internas dando vueltas sobre si empezar por el almacén o por el portal, y hoy tampoco salimos de aquí con eso cerrado. Igual es mejor que nos deis vuestra opinión de por dónde empezaríais vosotros.

@@ -1,0 +1,15 @@
+Transcripción de reunión de descubrimiento — TiendaVerde
+Asistentes: Marta Solís (Directora de Producto, TiendaVerde) · Consultor ITA
+
+Consultor: Buenos días Marta, cuéntanos qué tenéis en mente.
+Marta: Buenos días. Tenemos una cadena de tiendas físicas de productos de jardinería y queremos dar el salto a venta online en serio, no una tienda de plantilla básica. Necesitamos un backend headless en Node.js con GraphQL para el catálogo, porque manejamos más de 40.000 referencias con variantes por tamaño de maceta y por región.
+Consultor: Entendido. ¿Y en el frontend?
+Marta: Un storefront en Next.js con React, con renderizado en servidor para posicionar bien en buscadores, sobre todo en búsquedas muy específicas de producto.
+Consultor: ¿Carrito y checkout?
+Marta: Sí, carrito, cálculo de impuestos por país porque vendemos a España, Portugal y Francia, y que el checkout hable directamente con Stripe, sin redirigir a una pasarela externa.
+Consultor: ¿Algo de recomendaciones o personalización?
+Marta: Eso es lo que más nos interesa en realidad. Recomendaciones tipo "quien compró esto también compró aquello", basadas en historial de compra, servidas con muy baja latencia porque las mostraremos también en la portada.
+Consultor: ¿Inventario en tiempo real?
+Marta: Sí, tenemos tienda física y almacén central, así que el stock tiene que sincronizarse casi al segundo entre el punto de venta y la web; si no, acabaremos vendiendo cosas que no tenemos.
+Consultor: Con esto ya tenemos una foto clara. ¿Plazos?
+Marta: Nos gustaría un primer MVP de catálogo y storefront en cuatro meses, y dejar las recomendaciones para una segunda fase.
