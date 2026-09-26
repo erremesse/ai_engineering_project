@@ -2,6 +2,7 @@ import uuid
 import structlog
 from fastapi import FastAPI, Request
 
+from app.api.routers import estimate, retrieval
 from app.embedding_pipeline import router as embedding_router
 from app.logging_config import configure_logging
 from app.routers import estimations, sessions
@@ -31,6 +32,8 @@ async def request_context_middleware(request: Request, call_next):
 app.include_router(estimations.router)
 app.include_router(sessions.router)
 app.include_router(embedding_router.router)
+app.include_router(retrieval.router, prefix="/v1/retrieval", tags=["retrieval"])
+app.include_router(estimate.router, prefix="/v1/estimate", tags=["estimate"])
 
 
 @app.get("/health")

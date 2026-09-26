@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # Cache
     CACHE_TTL: int = 86_400  # seconds — 24 h default
 
+    # RAG (retrieval + generation, Sesion 09)
+    RETRIEVAL_API_KEY: str | None = None
+    ESTIMATE_API_KEY: str | None = None
+    RAG_TOP_K: int = 10
+    RAG_DISTANCE_THRESHOLD: float = 0.6
+    RAG_MAX_CONTEXT_TOKENS: int = 4000
+
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

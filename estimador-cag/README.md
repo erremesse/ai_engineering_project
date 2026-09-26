@@ -1,6 +1,6 @@
 # Estimador CAG
 
-Software project estimation service powered by LLMs. A FastAPI backend generates structured effort estimations from project descriptions using CAG (Context-Augmented Generation) with few-shot examples. A Streamlit frontend provides both a transactional (single-shot) and a conversational (multi-turn) interface with file attachment support.
+Software project estimation service powered by LLMs. A FastAPI backend generates structured effort estimations from project descriptions using CAG (Context-Augmented Generation) with few-shot examples, plus a RAG pipeline (Session 09) that turns a raw meeting transcript into a source-grounded, structured estimate over historical budgets persisted in pgvector. A Streamlit frontend provides transactional (single-shot), conversational (multi-turn), and RAG-from-transcript interfaces, with file attachment support in the conversational mode.
 
 ## Stack
 
@@ -51,6 +51,11 @@ cp .env.example .env
 | `APP_ENV` | `development` | Runtime environment |
 | `LOG_LEVEL` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `ESTIMADOR_API_BASE` | `http://localhost:8000` | Base URL of the FastAPI server, consumed by Streamlit (host perspective) |
+| `RETRIEVAL_API_KEY` | — (unset) | `X-API-Key` required on `POST /v1/retrieval/search`. Leave unset in local dev to disable auth on this route (see [RAG pipeline design decisions](#rag-pipeline-design-decisions-sesión-09)) |
+| `ESTIMATE_API_KEY` | — (unset) | `X-API-Key` required on `POST /v1/estimate/from-transcript`. Also read directly by `streamlit_app.py` (`os.getenv`, not loaded from `.env`) to call that endpoint |
+| `RAG_TOP_K` | `10` | Default number of chunks retrieved per RAG query, before `RAG_DISTANCE_THRESHOLD` trims them |
+| `RAG_DISTANCE_THRESHOLD` | `0.6` | Cosine distance cutoff (pgvector `<=>`, 0–2 scale) — chunks above this are discarded, not just ranked lower |
+| `RAG_MAX_CONTEXT_TOKENS` | `4000` | Token budget for the context block passed to the generator; whole chunks are dropped, never split, once the budget is exceeded |
 
 > **Migration note:** the old `ESTIMADOR_API_URL` variable (full path) has been replaced by `ESTIMADOR_API_BASE` (base URL only). Update your `.env` if you had it set explicitly.
 
@@ -324,6 +329,134 @@ y `chunks` (`content`, `embedding vector`, `metadata` JSONB), con `ON DELETE CAS
 filtros por metadata en SQL, búsqueda híbrida (full-text + vector) y tuning de Postgres
 (`shared_buffers`, `maintenance_work_mem`, `ef_search`).
 
+### RAG pipeline: transcript → estimate (Sesión 09)
+
+Session 08 stopped at persistence and raw retrieval: `/search` returns chunks, nothing
+turns them into an estimate. Session 09 closes that loop with two new endpoints under
+`app/api/`, on top of `app/retrieval/` (query reformulation + filtered retriever) and
+`app/generation/` (context assembly + structured generation) — none of the Session 06-08
+modules (`embedding_pipeline/*`, `prompts/*`) were modified, only extended additively
+(see [design decisions](#rag-pipeline-design-decisions-sesión-09) below).
+
+Both endpoints require an `X-API-Key` header (`RETRIEVAL_API_KEY` / `ESTIMATE_API_KEY`);
+auth is skipped with a logged warning if the corresponding variable is unset (local-dev
+convenience, same posture as every other endpoint in this project today).
+
+#### `POST /v1/retrieval/search`
+
+Low-level endpoint: runs the filtered vector search directly against pgvector, without
+going through transcript reformulation. Useful to debug retrieval in isolation.
+
+```json
+{
+  "query_text": "telemedicine video consultation with waiting room",
+  "top_k": 10,
+  "distance_threshold": 0.6,
+  "sectors": ["healthcare"],
+  "project_year_min": 2023,
+  "chunk_types": ["budget_component"],
+  "tech_stack": ["python_django"]
+}
+```
+
+```json
+{
+  "chunks": [
+    { "id": 32, "content": "...", "sector": "healthcare", "project_year": 2024, "chunk_type": "budget_component", "distance": 0.386 }
+  ],
+  "low_confidence": false,
+  "total_candidates_considered": 10
+}
+```
+
+`low_confidence: true` (with an empty `chunks` list) means no chunk cleared
+`distance_threshold` — a deliberate soft-fail, not an error.
+
+#### `POST /v1/estimate/from-transcript`
+
+Orchestrates the full pipeline: reformulation → retrieval → context assembly →
+generation → citation validation, each stage logged separately via `structlog`
+(`stage.started` / `stage.completed` / `stage.failed`, `duration_ms`).
+
+```json
+{
+  "transcript": "<raw meeting transcript, 100-50000 chars>",
+  "idempotency_key": "optional-client-supplied-id"
+}
+```
+
+```json
+{
+  "total_engineer_days": 350,
+  "cost_breakdown": [
+    { "name": "Telemedicine video sessions", "engineer_days": 20, "sources": [32] }
+  ],
+  "duration_weeks": 10,
+  "sources": [
+    { "source_id": 32, "relevance": "primary", "used_for": "Telemedicine video sessions" }
+  ],
+  "assumptions": [
+    { "description": "No existing EHR integration assumed", "impact": "medium", "rationale": "..." }
+  ],
+  "confidence": "medium",
+  "reasoning": "...",
+  "insufficient_context_explanation": null
+}
+```
+
+If retrieval comes back `low_confidence` (nothing in the corpus is close enough to the
+transcript), the endpoint returns `confidence: "insufficient"` directly — **the generator
+is never called with empty context**, which is what would invite hallucination. Any
+`source_id` the generator cites that was not actually retrieved is stripped before the
+response is returned (`validate_citations`, logged as `citation_validation_failed`).
+
+`idempotency_key` is accepted and bound into the structured logs for traceability; there
+is no deduplication/persistence behind it yet in this session's scope.
+
+### RAG pipeline design decisions (Sesión 09)
+
+- **Extracción estructurada (`EstimationQuery`) y no HyDE ni query rewriting puro.**
+  Coste/latencia comparables a HyDE (una sola llamada al LLM antes de la búsqueda), pero
+  produce un artefacto inspeccionable — se puede ver exactamente qué entendió el
+  reformulador — y, sobre todo, alimenta los filtros de metadata del retriever además del
+  texto embebido. Si la extracción estructurada falla (proveedor sin soporte de
+  `json_schema` estricto, o transcripción genuinamente ambigua), cae a un rewrite libre
+  más simple (`reformulation_fallback` en los logs); si ese porcentaje supera el ~5% de
+  las llamadas, es señal de un problema sistemático con el prompt o el esquema, no de
+  transcripciones raras sueltas.
+- **`response_format=<PydanticModel>` sobre el `litellm.Router` existente, no la Responses
+  API de OpenAI directamente.** El proyecto ya tenía un único punto de acceso multi-
+  proveedor (`app/services/llm_router.py`, Anthropic/OpenAI/Ollama con fallback); duplicar
+  ese acceso solo para RAG habría introducido una segunda forma de hablar con LLMs en el
+  mismo repo. La contrapartida: con `LLM_PROVIDER=ollama` (configuración real de este
+  repo) el modelo primario puede no soportar `json_schema` estricto de forma nativa —
+  `litellm.drop_params=True` lo descarta en silencio — por lo que `generate_structured`
+  reintenta sin `response_format`, reforzando el esquema en el propio prompt, antes de
+  propagar el error. Para máxima fiabilidad en pruebas de este pipeline, usa
+  `LLM_PROVIDER=openai` o `anthropic`.
+- **Filtros de metadata sobre `chunks`, sin `JOIN` a `documents`.** `client_sector` y
+  `year` ya venían denormalizados en `chunks.metadata` desde el chunker de Sesión 07;
+  Sesión 09 añade `tech_stack` al mismo nivel (`app/embedding_pipeline/chunker.py`). El
+  filtro de `tech_stack` usa el operador `?|` de `jsonb` (overlap), lo que requiere
+  Postgres ≥ 14 (el compose usa `pg16`, sin problema) — y como la ingesta es idempotente
+  por `source_path`, el corpus de ejemplo ya ingerido necesita un vaciado + re-ingesta
+  (`scripts/query_examples.py`) para que sus chunks tengan `tech_stack` en la metadata.
+- **Soft-fail en retrieval, no en generación.** Si ningún chunk supera
+  `RAG_DISTANCE_THRESHOLD`, el orquestador nunca llama al generador — devuelve
+  `confidence: "insufficient"` directamente. Alimentar al generador con contexto vacío
+  solo invita a alucinar una estimación con apariencia de solidez.
+- **Truncamiento por chunk completo, nunca parcial.** `truncate_to_token_budget` descarta
+  el chunk entero si no cabe en `RAG_MAX_CONTEXT_TOKENS`; un chunk cortado a mitad no solo
+  pierde coherencia semántica, también generaría citas a un `source_id` cuya evidencia
+  real el modelo nunca vio completa.
+- **API keys opcionales, no obligatorias.** Si `RETRIEVAL_API_KEY`/`ESTIMATE_API_KEY` no
+  están configuradas, la comprobación se salta con un warning logueado — mismo criterio
+  que el resto de endpoints del proyecto (ninguno tiene auth todavía). Es una decisión de
+  conveniencia para desarrollo local, no el valor por defecto recomendado en producción.
+
+**Fuera de scope (Sesión 10, en otra rama):** hybrid search (full-text + vector con RRF)
+y reranking con cross-encoder — el retriever de esta sesión es puramente vectorial.
+
 ## Conversational memory design
 
 ### Sliding window
@@ -380,12 +513,27 @@ estimador-cag/
 │   ├── routers/
 │   │   ├── estimations.py           # /estimate and /estimate/stream (transactional)
 │   │   └── sessions.py              # /sessions and /sessions/{id}/estimate (conversational)
+│   ├── api/                         # Session 09 — RAG endpoints, kept apart from routers/
+│   │   ├── security.py              # require_retrieval_key / require_estimate_key (X-API-Key)
+│   │   └── routers/
+│   │       ├── retrieval.py         # POST /v1/retrieval/search
+│   │       └── estimate.py          # POST /v1/estimate/from-transcript
+│   ├── retrieval/                   # Session 09 — query reformulation + filtered retriever
+│   │   ├── schemas.py               # EstimationQuery, RetrievedChunk, RetrievalResult
+│   │   ├── query_reformulator.py    # reformulate() (structured extraction + rewrite fallback)
+│   │   └── retriever.py             # search_chunks() — top-K/threshold/metadata filters
+│   ├── generation/                  # Session 09 — context assembly + structured generation
+│   │   ├── schemas.py               # Estimate, CostComponent, SourceCitation, Assumption
+│   │   ├── context_assembler.py     # build_context_block, truncate_to_token_budget, reorder_u_pattern
+│   │   ├── prompt_builder.py        # ESTIMATOR_SYSTEM_PROMPT, build_user_prompt
+│   │   ├── observability.py         # log_stage context manager (per-stage structlog events)
+│   │   └── estimator.py             # estimate_from_transcript() orchestrator, validate_citations
 │   ├── schemas/
 │   │   ├── estimation.py            # Transactional request/response models and enums
 │   │   └── sessions.py              # Session response models
 │   ├── services/
 │   │   ├── llm_router.py            # LiteLLM Router configuration and provider helpers
-│   │   ├── llm_service.py           # generate_estimation, stream_estimation, generate_from_messages
+│   │   ├── llm_service.py           # generate_estimation, stream_estimation, generate_from_messages, generate_structured
 │   │   ├── cache.py                 # ExactMatchCache (SHA-256, TTL-based)
 │   │   └── attachment_service.py    # PDF/DOCX text extraction (AttachmentService)
 │   ├── sessions/
@@ -406,7 +554,7 @@ estimador-cag/
 │       ├── chunker.py                # JSONStructuralChunker — one budget component = one chunk
 │       ├── embedder.py               # Embedder (OpenAI / Ollama), get_embedder() factory
 │       ├── models.py                 # Document, Chunk ORM models (pgvector)
-│       ├── store.py                  # ChunkStore — async repository (find/persist/search)
+│       ├── store.py                  # ChunkStore — async repository (find/persist/search/search_filtered)
 │       ├── router.py                  # POST /embeddings/ingest, POST /search
 │       └── SANITY_CHECK.md           # Cosine similarity results for the 3 validation pairs (Session 07)
 ├── alembic/
@@ -426,9 +574,12 @@ estimador-cag/
 │   │   └── test_exact_match.py      # Unit tests for ExactMatchCache
 │   ├── prompts/
 │   │   └── test_estimation_v1.py    # Unit tests for prompt templates
-│   └── sessions/
-│       └── test_sessions.py         # Integration tests for conversational flow
-├── streamlit_app.py                 # Streamlit frontend (transactional + conversational modes)
+│   ├── retrieval/
+│   │   └── test_query_reformulator.py  # compose_search_text + structured/rewrite fallback
+│   └── generation/
+│       ├── test_context_assembler.py   # XML wrapping, whole-chunk truncation, U-pattern reorder
+│       └── test_estimator.py           # validate_citations (pure id comparison)
+├── streamlit_app.py                 # Streamlit frontend (transactional + conversational + RAG-from-transcript modes)
 └── pyproject.toml
 ```
 

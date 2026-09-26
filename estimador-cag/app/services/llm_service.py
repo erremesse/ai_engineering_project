@@ -1,8 +1,10 @@
 import json
 import time
 from collections.abc import AsyncIterator
+from typing import TypeVar
 
 import structlog
+from pydantic import BaseModel
 
 from app.services.cache import cache
 from app.services.llm_router import router, default_model_name, infer_provider
@@ -11,6 +13,8 @@ _MODEL_ALIAS = "estimator"
 MAX_TOKENS = 1500
 
 logger = structlog.get_logger()
+
+T = TypeVar("T", bound=BaseModel)
 
 
 async def generate_from_messages(messages: list[dict]) -> dict:
@@ -198,3 +202,71 @@ async def stream_estimation(system: str, user: str) -> AsyncIterator[str]:
         "usage": usage,
     })
     yield "\x00" + json.dumps({"model": model_used, **usage})
+
+
+async def generate_structured(system: str, user: str, schema: type[T], *, retries: int = 1) -> T:
+    """Llama al LLM pidiendo un output que valide contra `schema` (Pydantic).
+
+    El primer intento usa `response_format=schema` (litellm lo traduce a json_schema
+    estricto para los proveedores que lo soportan). Si la validación falla — porque el
+    proveedor activo no soporta json_schema estricto y `litellm.drop_params=True` lo
+    descartó en silencio, o porque el modelo se desvió del esquema — se reintenta hasta
+    `retries` veces sin `response_format`, reforzando en el propio prompt que la
+    respuesta debe ser JSON puro conforme al esquema. Si se agotan los reintentos, se
+    propaga la última excepción de validación/llamada.
+    """
+    t0 = time.perf_counter()
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    last_exc: Exception | None = None
+
+    for attempt in range(retries + 1):
+        request_kwargs: dict = {"max_tokens": MAX_TOKENS}
+        if attempt == 0:
+            request_kwargs["response_format"] = schema
+        else:
+            messages = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Tu respuesta anterior no era JSON valido para el esquema pedido.\n"
+                        "Responde UNICAMENTE con un JSON valido que cumpla este esquema, "
+                        "sin texto adicional ni bloques de codigo:\n"
+                        f"{json.dumps(schema.model_json_schema())}"
+                    ),
+                }
+            ]
+
+        try:
+            response = await router.acompletion(model=_MODEL_ALIAS, messages=messages, **request_kwargs)
+            result = schema.model_validate_json(response.choices[0].message.content)
+            latency_ms = round((time.perf_counter() - t0) * 1000)
+            logger.info(
+                "structured_call_completed",
+                schema=schema.__name__,
+                attempt=attempt,
+                latency_ms=latency_ms,
+            )
+            return result
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "structured_call_attempt_failed",
+                schema=schema.__name__,
+                attempt=attempt,
+                error_type=type(exc).__name__,
+                error_msg=str(exc),
+            )
+
+    latency_ms = round((time.perf_counter() - t0) * 1000)
+    logger.error(
+        "structured_call_failed",
+        schema=schema.__name__,
+        attempts=retries + 1,
+        latency_ms=latency_ms,
+        error_type=type(last_exc).__name__,
+        error_msg=str(last_exc),
+    )
+    raise last_exc

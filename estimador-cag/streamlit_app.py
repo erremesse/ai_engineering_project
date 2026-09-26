@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from pathlib import Path
 
 import httpx
 import streamlit as st
@@ -15,8 +16,17 @@ _API_BASE = os.getenv("ESTIMADOR_API_BASE", "http://localhost:8000")
 _ESTIMATE_URL = f"{_API_BASE}/api/v1/estimate"
 _STREAM_URL = f"{_API_BASE}/api/v1/estimate/stream"
 _SESSIONS_URL = f"{_API_BASE}/api/v1/sessions"
+_RAG_ESTIMATE_URL = f"{_API_BASE}/v1/estimate/from-transcript"
+_RAG_API_KEY = os.getenv("ESTIMATE_API_KEY", "")
 
 _TIMEOUT = httpx.Timeout(connect=10, read=300, write=10, pool=5)
+
+_EXAMPLE_TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "examples" / "transcripts"
+_EXAMPLE_TRANSCRIPTS = {
+    "01_clear.txt": "Cliente claro",
+    "02_ambiguous.txt": "Cliente ambiguo",
+    "03_hard.txt": "Cambia de alcance",
+}
 
 # --- Labels ---
 _PROJECT_TYPE_LABELS: dict[ProjectType, str] = {
@@ -85,7 +95,9 @@ st.title("Estimador de proyectos software")
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    mode = st.radio("Modo de uso", ["Conversacional", "Transaccional"], horizontal=True)
+    mode = st.radio(
+        "Modo de uso", ["Conversacional", "Transaccional", "RAG (transcripcion)"], horizontal=True
+    )
 
     st.divider()
 
@@ -132,46 +144,50 @@ with st.sidebar:
     else:
         streaming_mode = False
 
-    # --- Shared controls ---
-    st.header("Ejemplos CAG en el prompt")
-    n_examples = st.slider(
-        label="",
-        min_value=1,
-        max_value=len(ESTIMATION_EXAMPLES),
-        value=st.session_state.last_form_values["n_examples"],
-        key="n_examples_slider",
-    )
+    # --- Shared controls (solo CAG: no aplica al modo RAG) ---
+    if mode != "RAG (transcripcion)":
+        st.header("Ejemplos CAG en el prompt")
+        n_examples = st.slider(
+            label="",
+            min_value=1,
+            max_value=len(ESTIMATION_EXAMPLES),
+            value=st.session_state.last_form_values["n_examples"],
+            key="n_examples_slider",
+        )
 
-    st.divider()
+        st.divider()
 
-    fv = st.session_state.last_form_values
-    st.header("System prompt activo")
-    _preview_request = EstimationRequest(
-        description="Esta es una descripcion de prueba para la vista previa del prompt.",
-        project_type=fv["project_type"],
-        detail_level=fv["detail_level"],
-        output_format=fv["output_format"],
-    )
-    _system_preview, _ = render_estimation_prompt(_preview_request)
-    st.text_area(
-        label="",
-        value=_system_preview,
-        height=220,
-        disabled=True,
-        key="system_prompt_display",
-    )
+        fv = st.session_state.last_form_values
+        st.header("System prompt activo")
+        _preview_request = EstimationRequest(
+            description="Esta es una descripcion de prueba para la vista previa del prompt.",
+            project_type=fv["project_type"],
+            detail_level=fv["detail_level"],
+            output_format=fv["output_format"],
+        )
+        _system_preview, _ = render_estimation_prompt(_preview_request)
+        st.text_area(
+            label="",
+            value=_system_preview,
+            height=220,
+            disabled=True,
+            key="system_prompt_display",
+        )
 
-    st.divider()
+        st.divider()
 
-    st.header("Contexto CAG — ejemplos inyectados")
-    for i, example in enumerate(ESTIMATION_EXAMPLES[:n_examples], 1):
-        with st.expander(f"Ejemplo {i}"):
-            st.markdown("**Resumen de reunion:**")
-            st.caption(example["meeting_summary"])
-            st.markdown("**Estimacion de referencia:**")
-            st.caption(example["estimation"])
+        st.header("Contexto CAG — ejemplos inyectados")
+        for i, example in enumerate(ESTIMATION_EXAMPLES[:n_examples], 1):
+            with st.expander(f"Ejemplo {i}"):
+                st.markdown("**Resumen de reunion:**")
+                st.caption(example["meeting_summary"])
+                st.markdown("**Estimacion de referencia:**")
+                st.caption(example["estimation"])
 
-    st.divider()
+        st.divider()
+    else:
+        n_examples = st.session_state.last_form_values["n_examples"]
+        fv = st.session_state.last_form_values
 
     st.header("Metricas — ultima llamada")
     if st.session_state.last_metrics:
@@ -392,3 +408,94 @@ elif mode == "Transaccional":
 
     elif st.session_state.last_result:
         st.markdown(st.session_state.last_result)
+
+
+# ---------------------------------------------------------------------------
+# RAG (transcripcion) mode
+# ---------------------------------------------------------------------------
+
+elif mode == "RAG (transcripcion)":
+    if "rag_transcript" not in st.session_state:
+        st.session_state.rag_transcript = ""
+
+    st.subheader("Estimacion desde transcripcion (RAG)")
+
+    example_cols = st.columns(len(_EXAMPLE_TRANSCRIPTS))
+    for col, (filename, label) in zip(example_cols, _EXAMPLE_TRANSCRIPTS.items()):
+        if col.button(label, use_container_width=True, key=f"load_{filename}"):
+            st.session_state.rag_transcript = (_EXAMPLE_TRANSCRIPTS_DIR / filename).read_text(encoding="utf-8")
+            st.rerun()
+
+    with st.form("rag_estimate_form"):
+        transcript = st.text_area(
+            "Transcripcion de la reunion",
+            value=st.session_state.rag_transcript,
+            placeholder="Pega aqui la transcripcion completa de la reunion con el cliente (minimo 100 caracteres)...",
+            height=220,
+        )
+        submitted = st.form_submit_button("Generar estimacion", type="primary", use_container_width=True)
+
+    if submitted:
+        if len(transcript.strip()) < 100:
+            st.error("La transcripcion debe tener al menos 100 caracteres.")
+        else:
+            st.session_state.rag_transcript = transcript
+            t0 = time.perf_counter()
+            try:
+                response = httpx.post(
+                    _RAG_ESTIMATE_URL,
+                    json={"transcript": transcript},
+                    headers={"X-API-Key": _RAG_API_KEY} if _RAG_API_KEY else {},
+                    timeout=_TIMEOUT,
+                )
+                response.raise_for_status()
+                st.session_state.last_rag_estimate = response.json()
+                st.session_state.last_metrics = {"elapsed": time.perf_counter() - t0}
+            except httpx.HTTPStatusError as e:
+                detail = e.response.json().get("detail", str(e))
+                st.error(f"Error del servidor: {detail}")
+            except httpx.RequestError:
+                st.error(f"No se pudo conectar con `{_RAG_ESTIMATE_URL}`. Esta el servidor en marcha?")
+
+    estimate = st.session_state.get("last_rag_estimate")
+    if estimate:
+        confidence = estimate["confidence"]
+        _CONFIDENCE_RENDER = {
+            "high": st.success,
+            "medium": st.info,
+            "low": st.warning,
+            "insufficient": st.error,
+        }
+        _CONFIDENCE_RENDER.get(confidence, st.info)(f"Confianza: {confidence}")
+
+        if confidence == "insufficient":
+            st.write(estimate.get("insufficient_context_explanation") or "Contexto insuficiente para estimar.")
+        else:
+            col1, col2 = st.columns(2)
+            col1.metric("Dias-ingeniero totales", estimate.get("total_engineer_days", "—"))
+            col2.metric("Duracion (semanas)", estimate.get("duration_weeks", "—"))
+
+            st.markdown("**Desglose de costes**")
+            st.table(
+                [
+                    {
+                        "Componente": c["name"],
+                        "Dias-ingeniero": c["engineer_days"],
+                        "Fuentes": ", ".join(str(s) for s in c["sources"]),
+                    }
+                    for c in estimate.get("cost_breakdown", [])
+                ]
+            )
+
+            if estimate.get("assumptions"):
+                st.markdown("**Asunciones**")
+                for a in estimate["assumptions"]:
+                    st.caption(f"[{a['impact']}] {a['description']} — {a['rationale']}")
+
+            if estimate.get("sources"):
+                st.markdown("**Fuentes citadas**")
+                for s in estimate["sources"]:
+                    st.caption(f"source {s['source_id']} ({s['relevance']}) — {s['used_for']}")
+
+        with st.expander("Razonamiento del modelo"):
+            st.caption(estimate.get("reasoning", ""))

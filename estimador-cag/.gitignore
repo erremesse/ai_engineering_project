@@ -24,3 +24,6 @@ venv/
 
 # Data
 data/
+
+# Claude Code plan artifacts 
+ay-dame-a-pasar-del-compressed-unicorn.md

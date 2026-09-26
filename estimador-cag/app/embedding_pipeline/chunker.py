@@ -47,6 +47,7 @@ class JSONStructuralChunker:
                             "component_id": component.component_id,
                             "client_sector": budget.client_metadata.sector,
                             "main_technology": budget.main_technology,
+                            "tech_stack": component.tech_stack,
                             "year": budget.year,
                             "complexity": component.complexity,
                             "estimated_hours": component.estimated_hours,
