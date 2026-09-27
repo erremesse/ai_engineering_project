@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     RAG_DISTANCE_THRESHOLD: float = 0.6
     RAG_MAX_CONTEXT_TOKENS: int = 4000
 
+    # Hybrid search + reranking (Sesion 10)
+    RAG_SEARCH_MODE: Literal["vector", "hybrid"] = "vector"
+    RAG_RERANK_ENABLED: bool = False
+    RAG_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RAG_RECALL_POOL_SIZE: int = 50
+    RAG_RRF_K: int = 60
+
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

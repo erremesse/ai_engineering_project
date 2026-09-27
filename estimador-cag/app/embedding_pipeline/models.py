@@ -7,8 +7,8 @@ asi que el atributo Python es `metadata_`, mapeado a la columna `"metadata"`.
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, ForeignKey, Index, String, Text, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Computed, ForeignKey, Index, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import DateTime
 
@@ -51,6 +51,12 @@ class Chunk(Base):
     )
     chunk_type: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Generated column (Postgres GENERATED ALWAYS AS ... STORED, see migration
+    # 0002_session10_fulltext_search): sa.Computed tells SQLAlchemy this is
+    # database-maintained, so it is excluded from INSERT/UPDATE automatically.
+    content_tsv: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('spanish', content)", persisted=True), nullable=True
+    )
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSION), nullable=True)
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")

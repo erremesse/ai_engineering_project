@@ -1,0 +1,31 @@
+{
+  "annotation_criterion": "Relevante si el presupuesto historico serviria como referencia directa de esfuerzo/alcance para estimar el proyecto descrito en la query. Anotacion a nivel de budget_id, no de componente individual.",
+  "annotated_by": "borrador inicial generado a partir de data/budgets_sample.json (Sesion 10) — pendiente de revision manual antes de tratarse como referencia definitiva",
+  "queries": [
+    {
+      "id": "q01",
+      "query": "Aplicacion de banca movil que necesita login OAuth2, conectores PSD2 de open banking y deteccion de fraude en tiempo real sobre las transacciones",
+      "relevant_budget_ids": ["BUD-2024-001", "BUD-2024-003"]
+    },
+    {
+      "id": "q02",
+      "query": "Plataforma de comercio electronico con catalogo de productos, carrito de compra, checkout y gestion de devoluciones post-venta",
+      "relevant_budget_ids": ["BUD-2024-005", "BUD-2024-008"]
+    },
+    {
+      "id": "q03",
+      "query": "Plataforma de telemedicina para citas de pacientes, con videoconsultas y una integracion HL7 FHIR con el sistema hospitalario",
+      "relevant_budget_ids": ["BUD-2024-009"]
+    },
+    {
+      "id": "q04",
+      "query": "Plataforma industrial de IoT que ingiere telemetria de sensores de maquinaria para mantenimiento predictivo y deteccion de anomalias",
+      "relevant_budget_ids": ["BUD-2024-013", "BUD-2024-015"]
+    },
+    {
+      "id": "q05",
+      "query": "Sistema que necesita integracion de firma electronica para contratos digitales legalmente vinculantes, con manejo de webhooks y archivado de documentos",
+      "relevant_budget_ids": ["BUD-2024-002"]
+    }
+  ]
+}

@@ -56,6 +56,11 @@ cp .env.example .env
 | `RAG_TOP_K` | `10` | Default number of chunks retrieved per RAG query, before `RAG_DISTANCE_THRESHOLD` trims them |
 | `RAG_DISTANCE_THRESHOLD` | `0.6` | Cosine distance cutoff (pgvector `<=>`, 0–2 scale) — chunks above this are discarded, not just ranked lower |
 | `RAG_MAX_CONTEXT_TOKENS` | `4000` | Token budget for the context block passed to the generator; whole chunks are dropped, never split, once the budget is exceeded |
+| `RAG_SEARCH_MODE` | `vector` | `vector` (Session 09 behavior) or `hybrid` (adds the full-text branch, fused via RRF — [Sesión 10](#búsqueda-híbrida-y-reranking-sesión-10)) |
+| `RAG_RERANK_ENABLED` | `false` | Recall-then-rerank: when `true`, a wide candidate pool (`RAG_RECALL_POOL_SIZE`) is narrowed to `RAG_TOP_K` by a cross-encoder instead of a plain cut |
+| `RAG_RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `sentence-transformers` cross-encoder model id; loaded lazily, only on the first reranked call |
+| `RAG_RECALL_POOL_SIZE` | `50` | Candidates fetched per branch before fusion/reranking, when `RAG_SEARCH_MODE=hybrid` or `RAG_RERANK_ENABLED=true` |
+| `RAG_RRF_K` | `60` | Reciprocal Rank Fusion smoothing constant (the value from the original RRF paper; rarely worth tuning first) |
 
 > **Migration note:** the old `ESTIMADOR_API_URL` variable (full path) has been replaced by `ESTIMADOR_API_BASE` (base URL only). Update your `.env` if you had it set explicitly.
 
@@ -454,8 +459,75 @@ is no deduplication/persistence behind it yet in this session's scope.
   que el resto de endpoints del proyecto (ninguno tiene auth todavía). Es una decisión de
   conveniencia para desarrollo local, no el valor por defecto recomendado en producción.
 
-**Fuera de scope (Sesión 10, en otra rama):** hybrid search (full-text + vector con RRF)
-y reranking con cross-encoder — el retriever de esta sesión es puramente vectorial.
+### Búsqueda híbrida y reranking (Sesión 10)
+
+Sesión 09 dejó el retriever puramente vectorial. Sesión 10 añade, sin tocar nada de lo
+anterior (`query_reformulator.py`, `prompt_builder.py`, `estimator.py` salvo la línea de
+llamada): una rama léxica full-text sobre PostgreSQL, fusión con **Reciprocal Rank
+Fusion (RRF)**, y un **reranker cross-encoder** en patrón recall-then-rerank. Alcance
+explícitamente acotado por el enunciado: nada de expansión de consultas, routing
+multi-índice ni filtros de metadata nuevos (los de Sesión 09 siguen intactos).
+
+Las cuatro configuraciones evaluables (Vectorial/Híbrida × Rerank sí/no) son las cuatro
+combinaciones de `search_mode`/`rerank` en `search_chunks(...)` — no requieren reiniciar
+el servidor ni cambiar `.env`, se invocan como argumentos de la misma función (ver
+`scripts/measure_retrieval.py`).
+
+- **`content_tsv` (columna generada) + `websearch_to_tsquery`/`ts_rank`.** Migración
+  `0002_session10_fulltext_search`: `content_tsv tsvector GENERATED ALWAYS AS
+  (to_tsvector('spanish', content)) STORED` + índice GIN. La rama léxica
+  (`ChunkStore.search_fulltext`) reutiliza los mismos filtros de metadata que la
+  vectorial (`_metadata_conditions`, extraído como helper compartido) para que ambas
+  ramas nunca diverjan sobre qué significa un filtro.
+- **Configuración `spanish`, no `english`, pese a que el dataset de muestra
+  (`data/budgets_sample.json`) está enteramente en inglés.** El idioma real de trabajo de
+  este sistema es español; el corpus de muestra es un placeholder, no el contenido de
+  producción. Aplicar `spanish` infra-radica el stemming sobre el inglés de muestra (los
+  términos ingleses pasan casi intactos, igual que un anglicismo pasaría casi intacto por
+  un diccionario español — ver el ejemplo "Stripe" más abajo), pero es la configuración
+  correcta para cuando se ingieran presupuestos reales — la misma lógica que ya
+  justificó `EMBEDDING_DIMENSION` no hardcodeado en Sesión 08: elegir corrección para el
+  destino real, no para el fixture de hoy.
+- **RRF y no normalización de scores.** La distancia coseno y `ts_rank` viven en escalas
+  incomparables y con distribuciones que cambian por query; normalizar y ponderar
+  funciona en la demo y se descalibra en producción. RRF ignora los scores brutos y usa
+  solo la posición en cada ranking (`app/retrieval/fusion.py::reciprocal_rank_fusion`),
+  con `RAG_RRF_K=60` (el valor del paper original — no es la perilla que vale la pena
+  tocar primero).
+- **Recall-then-rerank, con carga perezosa del cross-encoder.** `RAG_RECALL_POOL_SIZE=50`
+  candidatos por rama antes de fusionar/rerankear, recortados a `RAG_TOP_K` por
+  `app/retrieval/reranker.py::Reranker` (`sentence-transformers`, modelo
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`, inglés — coherente con el dataset de muestra;
+  reconsiderar si se ingieren presupuestos reales en español). El modelo — y `torch`,
+  que arrastra — solo se cargan la primera vez que `RAG_RERANK_ENABLED=true` dispara una
+  llamada real, nunca al importar el módulo, para no penalizar el arranque cuando el
+  reranking está desactivado (el default).
+- **`RetrievedChunk.distance` pasa a opcional.** Un chunk que solo viene de la rama
+  léxica no tiene distancia coseno propia; se renderiza como `distance="n/a"` en el
+  bloque `<source>` en vez de fallar o inventar un número.
+- **`low_confidence` sigue siendo un concepto puramente vectorial.** Aunque
+  `search_mode="hybrid"` esté activo, la señal de soft-fail se calcula solo sobre la rama
+  vectorial — `ts_rank` no tiene un umbral de "esto no es relevante" comparable a un
+  threshold de distancia coseno.
+
+#### Golden set y medición (`scripts/golden_set.json`, `scripts/measure_retrieval.py`)
+
+5 queries (en español, con anglicismos técnicos naturales — OAuth2, checkout, webhooks,
+HL7 FHIR, IoT) anotadas a mano contra los `budget_id` reales de
+`data/budgets_sample.json`, incluyendo una query (`q05`, firma electrónica) diseñada
+deliberadamente para probar el rescate léxico de RRF sobre un término específico, análoga
+al ejemplo "Stripe" del material de lectura. El script mide precisión@5 y latencia
+mediana (3 corridas por query) sobre las cuatro configuraciones, llamando a
+`search_chunks(...)` directamente en proceso — sin pasar por la reformulación LLM, para
+medir el retriever de forma aislada — y sin deduplicar presupuestos repetidos en el
+top-5 (ver docstring del script: es una señal informativa, no un bug, cuando interactúa
+con el fallo #4 diagnosticado en `arquitectura-actual.md`).
+
+```bash
+docker compose run --rm ai_service python scripts/measure_retrieval.py
+```
+
+Resultados y conclusiones: [`session10-hybrid-rerank-evaluation.md`](session10-hybrid-rerank-evaluation.md).
 
 ## Conversational memory design
 
@@ -518,10 +590,12 @@ estimador-cag/
 │   │   └── routers/
 │   │       ├── retrieval.py         # POST /v1/retrieval/search
 │   │       └── estimate.py          # POST /v1/estimate/from-transcript
-│   ├── retrieval/                   # Session 09 — query reformulation + filtered retriever
+│   ├── retrieval/                   # Session 09 retriever + Session 10 hybrid/rerank
 │   │   ├── schemas.py               # EstimationQuery, RetrievedChunk, RetrievalResult
 │   │   ├── query_reformulator.py    # reformulate() (structured extraction + rewrite fallback)
-│   │   └── retriever.py             # search_chunks() — top-K/threshold/metadata filters
+│   │   ├── retriever.py             # search_chunks() — vector/hybrid, top-K/threshold/filters, rerank
+│   │   ├── fusion.py                # reciprocal_rank_fusion() (Sesión 10)
+│   │   └── reranker.py              # Reranker (cross-encoder, lazy-loaded) (Sesión 10)
 │   ├── generation/                  # Session 09 — context assembly + structured generation
 │   │   ├── schemas.py               # Estimate, CostComponent, SourceCitation, Assumption
 │   │   ├── context_assembler.py     # build_context_block, truncate_to_token_budget, reorder_u_pattern
@@ -553,29 +627,34 @@ estimador-cag/
 │       ├── schemas.py               # Budget, Chunk, EmbeddedChunk, Ingest/Search request/response models
 │       ├── chunker.py                # JSONStructuralChunker — one budget component = one chunk
 │       ├── embedder.py               # Embedder (OpenAI / Ollama), get_embedder() factory
-│       ├── models.py                 # Document, Chunk ORM models (pgvector)
-│       ├── store.py                  # ChunkStore — async repository (find/persist/search/search_filtered)
+│       ├── models.py                 # Document, Chunk ORM models (pgvector + content_tsv generated column)
+│       ├── store.py                  # ChunkStore — async repository (search/search_filtered/search_fulltext)
 │       ├── router.py                  # POST /embeddings/ingest, POST /search
 │       └── SANITY_CHECK.md           # Cosine similarity results for the 3 validation pairs (Session 07)
 ├── alembic/
 │   ├── env.py                        # Reads DATABASE_URL from Settings, registers the vector type
 │   └── versions/
-│       └── 0001_initial_schema.py    # CREATE EXTENSION vector + documents/chunks tables
+│       ├── 0001_initial_schema.py            # CREATE EXTENSION vector + documents/chunks tables
+│       └── 0002_session10_fulltext_search.py # content_tsv generated column + GIN index
 ├── alembic.ini
 ├── Dockerfile                         # ai_service image (uv + uvicorn)
 ├── docker-compose.yml                 # postgres (pgvector/pgvector:pg16) + ai_service
 ├── scripts/
-│   └── query_examples.py             # CLI: ingests the sample corpus, runs 5 semantic search queries
+│   ├── query_examples.py             # CLI: ingests the sample corpus, runs 5 semantic search queries
+│   ├── golden_set.json               # 5 hand-annotated queries for retrieval measurement (Sesión 10)
+│   └── measure_retrieval.py          # Precision@5 + latency across the 4 vector/hybrid × rerank configs
 ├── data/
 │   └── budgets_sample.json           # 15 sample historical budgets used by embedding_pipeline
 ├── output_examples.txt               # Real output of query_examples.py against the sample corpus
+├── session10-hybrid-rerank-evaluation.md  # Golden set results + conclusions (Sesión 10 deliverable)
 ├── tests/
 │   ├── cache/
 │   │   └── test_exact_match.py      # Unit tests for ExactMatchCache
 │   ├── prompts/
 │   │   └── test_estimation_v1.py    # Unit tests for prompt templates
 │   ├── retrieval/
-│   │   └── test_query_reformulator.py  # compose_search_text + structured/rewrite fallback
+│   │   ├── test_query_reformulator.py  # compose_search_text + structured/rewrite fallback
+│   │   └── test_fusion.py              # reciprocal_rank_fusion (Sesión 10)
 │   └── generation/
 │       ├── test_context_assembler.py   # XML wrapping, whole-chunk truncation, U-pattern reorder
 │       └── test_estimator.py           # validate_citations (pure id comparison)

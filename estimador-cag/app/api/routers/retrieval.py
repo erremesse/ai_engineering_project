@@ -2,6 +2,8 @@
 filtros, sin pasar por la reformulacion de transcripciones. Util para depurar el
 retriever de forma aislada del resto del pipeline."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,11 @@ class SearchRequest(BaseModel):
     project_year_max: int | None = Field(default=None, ge=2010, le=2100)
     chunk_types: list[str] | None = None
     tech_stack: list[str] | None = None
+    # Sesion 10: los 4 modos evaluables (vector/hibrida x rerank on/off) son
+    # las 4 combinaciones de estos dos campos, ambos opcionales y con default
+    # identico al comportamiento de Sesion 09.
+    search_mode: Literal["vector", "hybrid"] = "vector"
+    rerank: bool = False
 
 
 class SearchResponseChunk(BaseModel):
@@ -30,7 +37,8 @@ class SearchResponseChunk(BaseModel):
     sector: str | None
     project_year: int | None
     chunk_type: str
-    distance: float
+    distance: float | None
+    budget_id: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -55,6 +63,8 @@ async def search(
         project_year_max=req.project_year_max,
         chunk_types=req.chunk_types,
         tech_stack=req.tech_stack,
+        search_mode=req.search_mode,
+        rerank=req.rerank,
     )
     return SearchResponse(
         chunks=[SearchResponseChunk(**chunk.model_dump()) for chunk in result.chunks],

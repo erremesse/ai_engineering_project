@@ -21,7 +21,9 @@ def _wrap_chunk(chunk: RetrievedChunk) -> str:
             f'sector="{chunk.sector or "unknown"}"',
             f'project_year="{chunk.project_year or "unknown"}"',
             f'chunk_type="{chunk.chunk_type}"',
-            f'distance="{chunk.distance:.3f}"',
+            # None para chunks que solo vinieron de la rama lexica de una
+            # busqueda hibrida (sin distancia coseno propia, ver retriever.py).
+            f'distance="{chunk.distance:.3f}"' if chunk.distance is not None else 'distance="n/a"',
         ]
     )
     return f"<source {attrs}>\n{chunk.content.strip()}\n</source>"

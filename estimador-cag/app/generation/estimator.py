@@ -72,6 +72,10 @@ async def estimate_from_transcript(
             top_k=settings.RAG_TOP_K,
             distance_threshold=settings.RAG_DISTANCE_THRESHOLD,
             sectors=[structured_query.sector] if structured_query.sector else None,
+            search_mode=settings.RAG_SEARCH_MODE,
+            rerank=settings.RAG_RERANK_ENABLED,
+            recall_pool_size=settings.RAG_RECALL_POOL_SIZE,
+            rrf_k=settings.RAG_RRF_K,
         )
         stage_log.info(
             "retrieval.chunks",

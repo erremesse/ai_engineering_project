@@ -10,7 +10,7 @@ from app.generation.context_assembler import (
 from app.retrieval.schemas import RetrievedChunk
 
 
-def _chunk(id_: int, content: str, distance: float = 0.1) -> RetrievedChunk:
+def _chunk(id_: int, content: str, distance: float | None = 0.1) -> RetrievedChunk:
     return RetrievedChunk(
         id=id_,
         content=content,
@@ -41,6 +41,14 @@ def test_truncate_to_token_budget_drops_whole_chunks_never_splits():
     assert selected == [small_chunk]
     # The huge chunk must be dropped whole, not present in any truncated form.
     assert all(chunk.id != 2 for chunk in selected)
+
+
+def test_build_context_block_renders_missing_distance_as_na():
+    # Chunks that only came from the lexical branch of a hybrid search have no
+    # cosine distance (see retriever.py::_to_chunk).
+    block = build_context_block([_chunk(1, "lexical-only content", distance=None)])
+
+    assert 'distance="n/a"' in block
 
 
 def test_truncate_to_token_budget_keeps_all_when_budget_is_generous():

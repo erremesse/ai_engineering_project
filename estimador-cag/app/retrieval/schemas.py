@@ -33,14 +33,22 @@ class EstimationQuery(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    """Un chunk devuelto por el retriever, con su distancia a la query."""
+    """Un chunk devuelto por el retriever, con su distancia a la query.
+
+    `distance` es `None` para chunks que solo vinieron de la rama lexica de una
+    busqueda hibrida (no tienen una distancia coseno propia). `budget_id`
+    identifica el presupuesto historico de origen (Sesion 07 ya lo persiste en
+    `chunk.metadata_`); se usa para medir precision@k a nivel de presupuesto en
+    `scripts/measure_retrieval.py`, no solo a nivel de chunk.
+    """
 
     id: int
     content: str
     sector: str | None
     project_year: int | None
     chunk_type: str
-    distance: float
+    distance: float | None
+    budget_id: str | None = None
 
 
 class RetrievalResult(BaseModel):

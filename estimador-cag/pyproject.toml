@@ -25,7 +25,23 @@ dependencies = [
     "asyncpg>=0.29",
     "pgvector>=0.3",
     "alembic>=1.13",
+    # Cross-encoder reranker (Sesion 10). Pulls torch transitively; loaded lazily
+    # (app/retrieval/reranker.py) so importing the package costs nothing unless
+    # RAG_RERANK_ENABLED=true actually triggers a model load.
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "anyio[trio]>=4.0"]
+
+# CPU-only torch: the default PyPI wheel pulls the full CUDA toolkit (~3GB of
+# nvidia-cu* packages) that a small CPU cross-encoder never uses. This service
+# has no GPU, in Docker or otherwise, so redirect torch to the CPU-only index.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
