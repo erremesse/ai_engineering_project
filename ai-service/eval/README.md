@@ -5,9 +5,32 @@
 | `golden_set.json` | Casos de referencia: transcripción → estimación esperada y rango aceptable |
 | `run_eval.py` | Harness que lanza el golden set contra el servicio IA desplegado y calcula las métricas |
 | `reports/` | Informe JSON de cada ejecución (`eval-YYYYMMDD-HHMMSS.json`). La serie histórica sirve para detectar regresiones |
+| `reports/dashboard.png` | Captura del dashboard de producción tomada durante la ejecución de ejemplo (ver abajo) |
 | `dashboard.py` | Genera el dashboard de producción a partir del JSONL de métricas del servicio |
 
 Cómo lanzarlo y cómo leer los resultados: [docs/evaluation.md](../../docs/evaluation.md).
+
+## Ejecución de ejemplo (27/09/2026)
+
+| Evidencia | Contenido |
+|---|---|
+| [reports/eval-20260927-181937.json](reports/eval-20260927-181937.json) | Informe del golden set con `claude-sonnet-5`: 8/8 casos, `within_range_rate` 1,0, `mean_absolute_error` 17,8 días, `abstention_correct` true, p95 80 s |
+| [reports/dashboard.png](reports/dashboard.png) | Dashboard del mismo tráfico, generado a las 18:21 UTC |
+
+![Dashboard de la ejecución de ejemplo](reports/dashboard.png)
+
+**Qué muestra la captura.** Son las 10 peticiones reales a `/v1/estimate/from-transcript`, entre las 18:11 y las 18:19 UTC:
+- una prueba previa del harness con case-002;
+- una petición **sin token**, lanzada a propósito para comprobar que los 401 se registran;
+- los 8 casos del golden set.
+
+| Panel | Valor | Lectura |
+|---|---|---|
+| Tasa de error | 10,0 % | Es el 401 intencionado (barra ámbar, «Rechazo del cliente»). No hubo ningún 502 |
+| Latencia media / p95 | 37,8 s / 80,1 s | En la serie temporal, el punto rojo es el 401. Los dos puntos finales, cerca de 0, son las abstenciones de case-007 y case-008: el retrieval no encuentra nada y no se llama al generador |
+| Coste por estimación / total | 0,0576 $ / 0,52 $ | 72.980 tokens de entrada y 37.247 de salida. El hueco en las barras es el 401, que no consume tokens |
+
+La versión final de la captura está en [docs/img/dashboard.png](../../docs/img/dashboard.png). Son los mismos datos, con el intervalo de fechas abreviado y el panel HTTP a escala.
 
 ## No confundir con `ai-service/scripts/golden_set.json` (Sesión 10)
 

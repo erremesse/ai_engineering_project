@@ -773,7 +773,7 @@ ai-service/
 ```
 
 Real output of `query_examples.py`: [`docs/output_examples.txt`](docs/output_examples.txt).
-Session write-ups, also in [`docs/`](docs/): `arquitectura-actual.md` (Session 9), `session10-hybrid-rerank-evaluation.md` (Session 10), `deployment-local.md` (Session 15).
+Session write-ups, also in [`docs/`](docs/): `arquitectura-actual.md` (Session 9), `session10-hybrid-rerank-evaluation.md` (Session 10), `deployment-local.md` (Session 15), `evaluation.md` (Session 16: golden set, evaluation harness and production dashboard; example run and dashboard screenshot in [`ai-service/eval/reports/`](ai-service/eval/reports/)).
 
 ## Security note
 
