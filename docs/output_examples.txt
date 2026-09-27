@@ -1,4 +1,5 @@
-Sesion 8
+Sesion 8 - Bases de datos vectoriales
+
 Servicio IA: http://ai_service:8000
 Corpus: 15 presupuestos — 14 ingeridos, 1 ya presentes.
 
