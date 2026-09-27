@@ -1,0 +1,167 @@
+{
+  "timestamp": "2026-09-27T18:19:37+00:00",
+  "ai_service_url": "http://localhost:8000",
+  "model": null,
+  "golden_set": "ai-service/eval/golden_set.json",
+  "golden_set_sha256": "b3195009cef1",
+  "metrics": {
+    "within_range_rate": 1.0,
+    "mean_absolute_error": 17.8,
+    "abstention_correct": true,
+    "abstention_rate": 1.0,
+    "mean_latency_ms": 40695.7,
+    "p95_latency_ms": 80153.7,
+    "error_rate": 0.0,
+    "grounded_rate": 1.0,
+    "n_cases": 8,
+    "n_passed": 8
+  },
+  "cases": [
+    {
+      "id": "case-001",
+      "difficulty": "easy",
+      "status": 200,
+      "error": null,
+      "confidence": "medium",
+      "predicted": 111,
+      "n_sources": 6,
+      "type": "estimation",
+      "passed": true,
+      "abstained": false,
+      "expected": 73,
+      "acceptable_range": [
+        45,
+        125
+      ],
+      "abs_error": 38,
+      "grounded": true,
+      "latency_ms": 80153.7
+    },
+    {
+      "id": "case-002",
+      "difficulty": "easy",
+      "status": 200,
+      "error": null,
+      "confidence": "medium",
+      "predicted": 60,
+      "n_sources": 7,
+      "type": "estimation",
+      "passed": true,
+      "abstained": false,
+      "expected": 60,
+      "acceptable_range": [
+        36,
+        100
+      ],
+      "abs_error": 0,
+      "grounded": true,
+      "latency_ms": 44704.0
+    },
+    {
+      "id": "case-003",
+      "difficulty": "medium-high",
+      "status": 200,
+      "error": null,
+      "confidence": "high",
+      "predicted": 62,
+      "n_sources": 3,
+      "type": "estimation",
+      "passed": true,
+      "abstained": false,
+      "expected": 63,
+      "acceptable_range": [
+        38,
+        105
+      ],
+      "abs_error": 1,
+      "grounded": true,
+      "latency_ms": 43165.3
+    },
+    {
+      "id": "case-004",
+      "difficulty": "medium-high",
+      "status": 200,
+      "error": null,
+      "confidence": "high",
+      "predicted": 65,
+      "n_sources": 4,
+      "type": "estimation",
+      "passed": true,
+      "abstained": false,
+      "expected": 65,
+      "acceptable_range": [
+        39,
+        110
+      ],
+      "abs_error": 0,
+      "grounded": true,
+      "latency_ms": 43945.9
+    },
+    {
+      "id": "case-005",
+      "difficulty": "ambiguous",
+      "status": 200,
+      "error": null,
+      "confidence": "low",
+      "predicted": 108,
+      "n_sources": 5,
+      "type": "estimation",
+      "passed": true,
+      "abstained": false,
+      "expected": 58,
+      "acceptable_range": [
+        30,
+        110
+      ],
+      "abs_error": 50,
+      "grounded": true,
+      "latency_ms": 74149.2
+    },
+    {
+      "id": "case-006",
+      "difficulty": "edge",
+      "status": 200,
+      "error": null,
+      "confidence": "insufficient",
+      "predicted": null,
+      "n_sources": 10,
+      "type": "estimation",
+      "passed": true,
+      "abstained": true,
+      "expected": 70,
+      "acceptable_range": [
+        30,
+        150
+      ],
+      "abs_error": null,
+      "grounded": false,
+      "latency_ms": 32323.3
+    },
+    {
+      "id": "case-007",
+      "difficulty": "abstention",
+      "status": 200,
+      "error": null,
+      "confidence": "insufficient",
+      "predicted": null,
+      "n_sources": 0,
+      "type": "abstention",
+      "passed": true,
+      "abs_error": null,
+      "latency_ms": 3171.4
+    },
+    {
+      "id": "case-008",
+      "difficulty": "abstention",
+      "status": 200,
+      "error": null,
+      "confidence": "insufficient",
+      "predicted": null,
+      "n_sources": 0,
+      "type": "abstention",
+      "passed": true,
+      "abs_error": null,
+      "latency_ms": 3952.8
+    }
+  ]
+}

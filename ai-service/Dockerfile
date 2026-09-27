@@ -37,7 +37,7 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     HF_HOME=/app/.cache/huggingface
 
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh && \
-    mkdir -p "$HF_HOME" && chown -R app:app /app
+    mkdir -p "$HF_HOME" /app/metrics && chown -R app:app /app
 
 USER app
 

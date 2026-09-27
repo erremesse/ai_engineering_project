@@ -36,8 +36,12 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${VECTOR_DB_USER:-estimator}:${VECTOR_DB_PASSWORD:-estimator}@vector-db:5432/${VECTOR_DB_NAME:-estimator}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?AI_SERVICE_TOKEN must be set in .env}
+      # Sesion 16: one JSON line per estimation request (latency, tokens, cost,
+      # status), read by ai-service/eval/dashboard.py. See docs/evaluation.md.
+      METRICS_LOG_PATH: /app/metrics/estimate_requests.jsonl
     volumes:
       - hf_cache:/app/.cache/huggingface
+      - metrics_data:/app/metrics
     depends_on:
       vector-db:
         condition: service_healthy
@@ -83,3 +87,4 @@ volumes:
   postgres_data:
   business_postgres_data:
   hf_cache:
+  metrics_data:

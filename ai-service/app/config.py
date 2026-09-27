@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     RAG_RECALL_POOL_SIZE: int = 50
     RAG_RRF_K: int = 60
 
+    # Production metrics (Sesion 16): one JSON line per /v1/estimate request, read by
+    # eval/dashboard.py. Prices are USD per million tokens of the active LLM; defaults
+    # are claude-sonnet-5 list prices ($2 in / $10 out) — override them when switching
+    # model or provider (ollama -> 0). METRICS_LOG_PATH=None keeps only the structlog
+    # event (local runs, tests); compose sets it to the metrics_data volume.
+    METRICS_LOG_PATH: str | None = None
+    LLM_PRICE_INPUT_PER_MTOK_USD: float = 2.0
+    LLM_PRICE_OUTPUT_PER_MTOK_USD: float = 10.0
+
     # Pydantic v2 usa model_config para definir el archivo .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

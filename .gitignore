@@ -29,7 +29,12 @@ ai-service/data/*
 !ai-service/data/budgets_sample_es.json
 !ai-service/data/catalog/
 
-# Claude Code plan artifacts 
+# Sesion 16: production metrics copied out of the container and the dashboard
+# generated from them (the screenshot lives in docs/img/). eval/reports/ IS versioned.
+ai-service/eval/metrics/
+ai-service/eval/dashboard/
+
+# Claude Code plan artifacts
 docs/plans
 
 # Old version (before session 15)

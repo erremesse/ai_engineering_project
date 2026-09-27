@@ -1,0 +1,91 @@
+[
+  {
+    "id": "case-001",
+    "difficulty": "easy",
+    "transcript_file": "business-backend/examples/transcripts/01_clear.txt",
+    "expected_engineer_days": 73,
+    "acceptable_range": [45, 125],
+    "expected_confidence": ["high", "medium"],
+    "expected_budget_ids": ["BUD-2024-005", "BUD-2024-007"],
+    "expect_abstention": false,
+    "notes": "E-commerce headless con alcance claro. Base historica: CATALOG-001 150h + CART-002 140h + RECO-003 110h + STORE-004 60h (BUD-2024-005) + INV-003 120h sincronizacion de inventario (BUD-2024-007) = 580h / 8 = 72,5 dias. Rango x0,6-x1,7."
+  },
+  {
+    "id": "case-002",
+    "difficulty": "easy",
+    "transcript": "Transcripción de reunión de descubrimiento — entidad financiera (sintética)\nAsistentes: Responsable de Canales Digitales (cliente) · Consultor ITA\n\nConsultor: ¿Qué necesitáis construir?\nCliente: Somos un banco mediano en España y queremos una API para nuestra nueva app de banca móvil. Lo primero es la autenticación: OAuth 2.0 con authorization code y refresh token, sesiones con JWT y limitación de peticiones por cliente, porque la API la consumirán también terceros.\nConsultor: ¿Terceros vía open banking?\nCliente: Exacto. Tenemos que cumplir PSD2: endpoints de información de cuentas e iniciación de pagos siguiendo Berlin Group, con autenticación reforzada del cliente y gestión de consentimientos.\nConsultor: ¿Y el núcleo de movimientos?\nCliente: Un servicio de libro mayor de partida doble, con escrituras idempotentes, conciliación diaria y auditoría de cada cambio de saldo. Por último, notificaciones push y por email para alertas de transacciones y eventos de seguridad.\nConsultor: ¿Stack preferido?\nCliente: Ruby on Rails con PostgreSQL y Redis, que es lo que ya mantiene nuestro equipo interno.",
+    "expected_engineer_days": 60,
+    "acceptable_range": [36, 100],
+    "expected_confidence": ["high", "medium"],
+    "expected_budget_ids": ["BUD-2024-001", "BUD-2024-003"],
+    "expect_abstention": false,
+    "notes": "Precedente casi 1:1 con BUD-2024-001 (AUTH-001 120h + PSD2-002 160h + TXN-003 140h + NOTIF-004 60h = 480h / 8 = 60 dias). Rango x0,6-x1,7."
+  },
+  {
+    "id": "case-003",
+    "difficulty": "medium-high",
+    "transcript": "Transcripción de reunión de descubrimiento — planta siderúrgica (sintética)\nAsistentes: Director de Mantenimiento (cliente) · Consultor ITA\n\nConsultor: Contadnos el problema.\nCliente: Tenemos paradas no planificadas en las líneas de laminación que nos cuestan mucho dinero. Queremos instrumentar la maquinaria: los sensores ya existen, pero hay que ingerir su telemetría vía MQTT hacia una base de series temporales, con buffer en el edge porque la red de planta se corta y los datos llegan desordenados.\nConsultor: ¿Y sobre esos datos?\nCliente: Modelos de mantenimiento predictivo: detección de anomalías y estimación de vida útil restante, que marquen qué máquinas están en riesgo y propongan ventanas de mantenimiento.\nConsultor: ¿Dónde lo verían los operarios?\nCliente: En el SCADA que ya usan. Integración de solo lectura para superponer las alertas predictivas en sus paneles; no queremos otra pantalla más.\nConsultor: ¿Tecnología?\nCliente: Python, FastAPI, TimescaleDB y scikit-learn; nuestro equipo de datos ya trabaja con eso.",
+    "expected_engineer_days": 63,
+    "acceptable_range": [38, 105],
+    "expected_confidence": ["high", "medium"],
+    "expected_budget_ids": ["BUD-2024-013", "BUD-2024-015"],
+    "expect_abstention": false,
+    "notes": "Esfuerzo medio-alto con dos componentes de complejidad alta. Base: BUD-2024-013 (TELE-001 170h + PRED-002 200h + SCADA-003 130h = 500h / 8 = 62,5 dias). Rango x0,6-x1,7."
+  },
+  {
+    "id": "case-004",
+    "difficulty": "medium-high",
+    "transcript": "Transcripción de reunión de descubrimiento — financiera de consumo (sintética)\nAsistentes: Directora de Riesgos (cliente) · Consultor ITA\n\nConsultor: ¿Qué queréis automatizar?\nCliente: Toda la originación de préstamos al consumo. Ahora mismo un analista revisa cada solicitud a mano. Necesitamos un motor de scoring que combine reglas y modelos, que lea datos de burós de crédito y extractos bancarios y devuelva una banda de riesgo y un límite recomendado, con trazas de explicabilidad para el regulador.\nConsultor: ¿El flujo de solicitud también?\nCliente: Sí: formulario configurable, verificación KYC, subida de documentación, cola de suscripción para los casos dudosos y decisión automática por umbrales.\nConsultor: ¿Firma del contrato?\nCliente: Integración con un proveedor de firma electrónica cualificada, gestión de webhooks y archivo de los contratos firmados. Y exportaciones periódicas de cartera y morosidad en el formato que nos pide el supervisor.\nConsultor: ¿Stack?\nCliente: Django con Celery y PostgreSQL.",
+    "expected_engineer_days": 65,
+    "acceptable_range": [39, 110],
+    "expected_confidence": ["high", "medium"],
+    "expected_budget_ids": ["BUD-2024-002"],
+    "expect_abstention": false,
+    "notes": "Base: BUD-2024-002 (SCORE-001 200h + ORIG-002 180h + SIGN-003 80h + REPORT-004 60h = 520h / 8 = 65 dias). Rango x0,6-x1,7."
+  },
+  {
+    "id": "case-005",
+    "difficulty": "ambiguous",
+    "transcript_file": "business-backend/examples/transcripts/02_ambiguous.txt",
+    "expected_engineer_days": 58,
+    "acceptable_range": [30, 110],
+    "expected_confidence": ["medium", "low"],
+    "expected_budget_ids": ["BUD-2024-009", "BUD-2024-010"],
+    "expect_abstention": false,
+    "notes": "Cliente disperso, pero con un nucleo concreto: citas + videoconsulta + alertas de dolor. Base: APPT-002 150h + VIDEO-003 160h (BUD-2024-009) + ALERT-002 150h (BUD-2024-010) = 460h / 8 = 57,5 dias. Se excluyen la migracion de historiales y el marketing, que el cliente deja fuera de fase. Rango ampliado (x0,5-x1,9) por la ambiguedad."
+  },
+  {
+    "id": "case-006",
+    "difficulty": "edge",
+    "transcript_file": "business-backend/examples/transcripts/03_hard.txt",
+    "expected_engineer_days": 70,
+    "acceptable_range": [30, 150],
+    "expected_confidence": ["low", "insufficient"],
+    "expected_budget_ids": ["BUD-2024-014", "BUD-2024-013", "BUD-2024-005"],
+    "expect_abstention": false,
+    "allow_abstention": true,
+    "notes": "Caso de borde: el cliente no ha decidido el alcance (almacen, portal B2B o ambos). Una abstencion es tan valida como una estimacion prudente. Base de una primera fase de almacen: WMS-001 220h (BUD-2024-014) + TELE-001 170h (BUD-2024-013) = 390h / 8 = 49 dias; con portal (CATALOG-001 150h) = 540h / 8 = 67,5 dias. Rango muy amplio."
+  },
+  {
+    "id": "case-007",
+    "difficulty": "abstention",
+    "transcript": "Transcripción de reunión de descubrimiento — cadena de restauración (sintética)\nAsistentes: Director de Sistemas (cliente) · Consultor ITA\n\nConsultor: ¿Qué necesitáis?\nCliente: Integrar nuestro ERP propio, que desarrolló hace quince años una empresa que ya no existe. No hay documentación ni API: solo una base de datos Informix con tablas sin nombres descriptivos y algunos procedimientos almacenados que nadie entiende.\nConsultor: ¿Qué debería hacer esa integración?\nCliente: Sincronizar escandallos, mermas de cocina y pedidos a proveedores de nuestros cuarenta restaurantes con la nueva plataforma de compras. Lo que se integre dependerá de lo que descubramos al hacer ingeniería inversa del ERP.\nConsultor: ¿Hay alguien que conozca el sistema?\nCliente: No. Por eso no podemos dar más detalle: primero habría que investigar qué hay dentro.",
+    "expected_engineer_days": null,
+    "acceptable_range": null,
+    "expected_confidence": ["insufficient"],
+    "expected_budget_ids": [],
+    "expect_abstention": true,
+    "notes": "Sin precedente: sector restauracion fuera del corpus (finance/ecommerce/healthcare/industrial), sistema legado sin documentacion y alcance dependiente de una investigacion previa. Lo correcto es abstenerse, no inventar una cifra."
+  },
+  {
+    "id": "case-008",
+    "difficulty": "abstention",
+    "transcript": "Transcripción de reunión de descubrimiento — ayuntamiento (sintética)\nAsistentes: Jefa del Servicio de Informática Municipal (cliente) · Consultor ITA\n\nConsultor: ¿En qué consiste el proyecto?\nCliente: Modernizar la aplicación de tributos locales, que corre en un mainframe con COBOL y CICS. Queremos llevarla a la nube y exponer la tramitación de recibos, domiciliaciones y recursos en la sede electrónica, cumpliendo el Esquema Nacional de Seguridad.\nConsultor: ¿Tenéis inventario del código?\nCliente: No sabemos cuántos programas hay; calculamos que varios cientos, y la persona que lo mantenía se jubiló. Tampoco sabemos qué partes siguen en uso.\nConsultor: ¿Plazo o restricciones?\nCliente: Depende de la licitación, que aún no está redactada. Queríamos una cifra orientativa para el pliego.",
+    "expected_engineer_days": null,
+    "acceptable_range": null,
+    "expected_confidence": ["insufficient"],
+    "expected_budget_ids": [],
+    "expect_abstention": true,
+    "notes": "Sin precedente: sector publico y migracion de mainframe COBOL, ausentes del corpus historico, con un alcance desconocido incluso para el cliente. Segunda senal de abstencion, para no depender de un solo caso."
+  }
+]

@@ -7,6 +7,7 @@ from typing import TypeVar
 import structlog
 from pydantic import BaseModel
 
+from app.observability import add_usage, add_usage_counts
 from app.services.cache import cache
 from app.services.llm_router import router, default_model_name, infer_provider
 
@@ -57,6 +58,7 @@ async def generate_from_messages(messages: list[dict]) -> dict:
         )
         raise
 
+    add_usage(response)
     model = response.model or default_model_name()
     provider = infer_provider(model)
     latency_ms = round((time.perf_counter() - t0) * 1000)
@@ -108,6 +110,7 @@ async def generate_estimation(system: str, user: str) -> dict:
         )
         raise
 
+    add_usage(response)
     model = response.model or default_model_name()
     provider = infer_provider(model)
     latency_ms = round((time.perf_counter() - t0) * 1000)
@@ -189,6 +192,7 @@ async def stream_estimation(system: str, user: str) -> AsyncIterator[str]:
         )
         raise
 
+    add_usage_counts(usage["input_tokens"], usage["output_tokens"], model_used)
     provider = infer_provider(model_used)
     latency_ms = round((time.perf_counter() - t0) * 1000)
     logger.info(
@@ -262,6 +266,8 @@ async def generate_structured(system: str, user: str, schema: type[T], *, retrie
 
         try:
             response = await router.acompletion(model=_MODEL_ALIAS, messages=messages, **request_kwargs)
+            # Before validation: a failed attempt is billed as well.
+            add_usage(response)
             result = schema.model_validate_json(strip_code_fence(response.choices[0].message.content))
             latency_ms = round((time.perf_counter() - t0) * 1000)
             logger.info(
