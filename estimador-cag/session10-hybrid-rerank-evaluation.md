@@ -36,15 +36,34 @@ estimar el proyecto descrito en la query"*.
 
 ## 3. Resultados
 
-_(pendiente de completar tras `docker compose run --rm ai_service python scripts/measure_retrieval.py`)_
+Ejecución real contra el corpus de 15 presupuestos re-ingerido (`docker compose run --rm ai_service python scripts/measure_retrieval.py`, `RAG_DISTANCE_THRESHOLD=0.6`, `RAG_RECALL_POOL_SIZE=50`, `RAG_RRF_K=60`, reranker `cross-encoder/ms-marco-MiniLM-L-6-v2`):
 
 | Config | Búsqueda / Reranking | Precisión\@5 media | Latencia mediana (ms) |
 | --- | --- | --- | --- |
-| A | Vectorial / No | — | — |
-| B | Híbrida / No | — | — |
-| C | Vectorial / Sí | — | — |
-| D | Híbrida / Sí | — | — |
+| A | Vectorial / No | **0.76** | **86** |
+| B | Híbrida / No | 0.76 | 91 |
+| C | Vectorial / Sí | 0.64 | 1689 |
+| D | Híbrida / Sí | 0.64 | 1624 |
+
+Desglose por query (precisión\@5; idéntico entre A/B y entre C/D en las 5 queries):
+
+| Query | A / B (sin rerank) | C / D (con rerank) |
+| --- | --- | --- |
+| q01 — banca móvil OAuth2/PSD2/fraude | 1.00 | 1.00 |
+| q02 — e-commerce catálogo/carrito/devoluciones | 1.00 | **0.40** |
+| q03 — telemedicina FHIR | 0.80 | 0.80 |
+| q04 — IoT industrial/mantenimiento predictivo | 0.60 | 0.60 |
+| q05 — firma electrónica/webhook (test de rescate léxico) | 0.40 | 0.40 |
+
+Dos observaciones no anticipadas antes de correr el script, ambas con la misma causa raíz:
+
+1. **La rama híbrida no cambió ni una sola precisión respecto a la vectorial pura**, en ninguna de las 5 queries — ni siquiera en q05, diseñada expresamente para que RRF rescatara el match léxico "firma electrónica"/"webhook". Causa: las queries del golden set están en español, pero el corpus de muestra (`data/budgets_sample.json`) está enteramente en inglés (ver README). `to_tsvector('spanish', content)` sobre contenido inglés apenas encuentra solapamiento léxico real con una query en español — ni siquiera los anglicismos técnicos de la query ("webhook", "checkout") coinciden con palabras inglesas *distintas* en el chunk ("webhook handling" sí aparece en `BUD-2024-002`, pero el resto de la query en español no aporta términos que el chunk comparta). La rama léxica, tal como está configurada, es esencialmente inerte contra este corpus concreto.
+2. **El reranking no mejoró nada y empeoró q02 de 1.00 a 0.40**, multiplicando la latencia mediana por ~19 (86 ms → 1689 ms). `cross-encoder/ms-marco-MiniLM-L-6-v2` está entrenado en pares pregunta-pasaje en inglés; evaluar pares (query en español, pasaje en inglés) es tan fuera de distribución para el cross-encoder como para la rama léxica — mismo problema de idioma, dos síntomas distintos.
+
+**Esto no es un fallo del diseño, es el resultado esperado de una decisión ya documentada**: se configuró `spanish` (no `english`) porque es el idioma real de trabajo de ITA, a sabiendas de que el corpus de muestra actual es un placeholder en inglés. Esta medición es, en sí misma, la confirmación empírica de esa nota — y una razón más para no tratar estos números como definitivos hasta re-ejecutar el script con presupuestos históricos reales en español.
 
 ## 4. Conclusiones
 
-_(pendiente)_
+**Para este proyecto, con el corpus de muestra actual, usaría la Configuración A (vectorial, sin reranking)**: misma precisión que la híbrida, precisión *mayor* que con reranking, y la latencia más baja con diferencia (86 ms frente a >1.6 s). La ganancia de relevancia del reranking no solo no compensa su coste de latencia en este caso concreto — es negativa, así que la decisión ni siquiera es un trade-off, es una elección dominada.
+
+Dicho esto, esta conclusión está condicionada al desajuste de idioma diagnosticado arriba, no es una condena de la búsqueda híbrida ni del reranking como técnicas. Ambas piezas están construidas pensando en el corpus real que este sistema va a manejar (presupuestos históricos en español), no en el dataset de muestra en inglés usado aquí por conveniencia del ejercicio. Antes de decidir la configuración de producción definitiva, esta misma medición debería repetirse en cuanto haya presupuestos reales en español ingeridos — es plausible (aunque no seguro) que ahí la rama léxica sí rescate coincidencias de terminología exacta (números de norma, siglas, nombres de producto) que el embedding difumina, y que un cross-encoder mejor alineado con el idioma real del corpus deje de penalizar la precisión. Hasta entonces, la vectorial simple es la opción defendible: más simple, más barata, y — con los datos que tenemos hoy — mejor.
