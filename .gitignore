@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.python-version
+# uv.lock SI se versiona (Sesion 15): el Dockerfile hace `uv sync --frozen`
+
+# Virtual environments
+.venv
+venv/
+
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+
+# Data — solo se versiona el corpus sintetico que necesita la imagen del
+# servicio IA (Sesion 15); data/seed/ y el resto siguen fuera de git.
+ai-service/data/*
+!ai-service/data/budgets_sample.json
+!ai-service/data/budgets_sample_es.json
+!ai-service/data/catalog/
+
+# Claude Code plan artifacts 
+docs/plans
+
+# Old version (before session 15)
+estimador-cag/

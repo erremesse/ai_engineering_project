@@ -1,0 +1,21 @@
+# Development override — NOT for the Sesion 15 checks (it publishes the AI
+# service on purpose). Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# - ai-service on :8000 with --reload and the code mounted, so scripts/tests can
+#   run from the host (cd ai-service; uv run python scripts/query_examples.py).
+# - vector-db on :5432 for psql / DB tooling from the host.
+services:
+  ai-service:
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./ai-service/app:/app/app
+      - ./ai-service/scripts:/app/scripts
+      - ./ai-service/alembic:/app/alembic
+      - ./ai-service/data:/app/data
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  vector-db:
+    ports:
+      - "5432:5432"

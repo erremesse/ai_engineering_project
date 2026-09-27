@@ -1,0 +1,554 @@
+import time
+from pathlib import Path
+
+import httpx
+import streamlit as st
+
+import db
+from ai_client import AiServiceClient
+from ui_enums import DetailLevel, OutputFormat, ProjectType
+
+# Business backend (Sesion 15): this app never imports the AI service code. It
+# talks to it over HTTP (AiServiceClient, with X-Service-Token) and persists the
+# estimation history in its own Postgres (db.py).
+
+_FALLBACK_MAX_EXAMPLES = 5
+
+
+@st.cache_resource
+def _ai_client() -> AiServiceClient:
+    return AiServiceClient()
+
+
+@st.cache_resource
+def _db_conn():
+    try:
+        return db.connect()
+    except Exception as exc:  # the UI keeps working without history
+        st.warning(f"Historial no disponible (BBDD relacional): {exc}")
+        return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cag_preview(project_type: str, detail_level: str, output_format: str, n_examples: int) -> dict | None:
+    try:
+        return _ai_client().cag_preview(project_type, detail_level, output_format, n_examples)
+    except Exception:
+        return None
+
+
+def _save_history(**fields) -> None:
+    conn = _db_conn()
+    if conn is None:
+        return
+    try:
+        db.save_estimation(conn, **fields)
+    except Exception as exc:
+        st.warning(f"No se pudo guardar en el historial: {exc}")
+
+
+ai = _ai_client()
+_preview_default = _cag_preview(
+    ProjectType.WEB_SAAS.value, DetailLevel.MEDIUM.value, OutputFormat.PHASES_TABLE.value, 1
+)
+_MAX_EXAMPLES = _preview_default["max_examples"] if _preview_default else _FALLBACK_MAX_EXAMPLES
+
+_EXAMPLE_TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "examples" / "transcripts"
+_EXAMPLE_TRANSCRIPTS = {
+    "01_clear.txt": "Cliente claro",
+    "02_ambiguous.txt": "Cliente ambiguo",
+    "03_hard.txt": "Cambia de alcance",
+}
+
+# --- Labels ---
+_PROJECT_TYPE_LABELS: dict[ProjectType, str] = {
+    ProjectType.MOBILE_APP: "Aplicacion movil",
+    ProjectType.WEB_SAAS: "Web / SaaS",
+    ProjectType.INTERNAL_TOOL: "Herramienta interna",
+    ProjectType.DATA_PIPELINE: "Pipeline de datos",
+}
+_DETAIL_LEVEL_LABELS: dict[DetailLevel, str] = {
+    DetailLevel.SUMMARY: "Resumen ejecutivo",
+    DetailLevel.MEDIUM: "Desglose por fases",
+    DetailLevel.DETAILED: "Desglose completo",
+}
+_OUTPUT_FORMAT_LABELS: dict[OutputFormat, str] = {
+    OutputFormat.PHASES_TABLE: "Tabla de fases",
+    OutputFormat.LINE_ITEMS: "Partidas de presupuesto",
+    OutputFormat.NARRATIVE: "Informe narrativo",
+}
+
+_DEFAULT_FORM_VALUES = {
+    "project_type": ProjectType.WEB_SAAS,
+    "detail_level": DetailLevel.MEDIUM,
+    "output_format": OutputFormat.PHASES_TABLE,
+    "n_examples": _MAX_EXAMPLES,
+}
+
+
+# ---------------------------------------------------------------------------
+# Session helpers
+# ---------------------------------------------------------------------------
+
+def _create_session() -> str | None:
+    try:
+        return ai.create_session()
+    except Exception as exc:
+        st.error(f"No se pudo crear la sesion con el servidor: {exc}")
+        return None
+
+
+def _reset_session_state():
+    st.session_state.session_id = _create_session()
+    st.session_state.chat_history = []
+    st.session_state.last_metadata = None
+    st.session_state.last_metrics = None
+    st.session_state.last_result = None
+    st.session_state.last_form_values = _DEFAULT_FORM_VALUES.copy()
+
+
+# ---------------------------------------------------------------------------
+# State initialization (runs once per browser session)
+# ---------------------------------------------------------------------------
+
+if "session_id" not in st.session_state:
+    _reset_session_state()
+
+# ---------------------------------------------------------------------------
+# Title
+# ---------------------------------------------------------------------------
+
+st.title("Estimador de proyectos software")
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    mode = st.radio(
+        "Modo de uso", ["Conversacional", "Transaccional", "RAG (transcripcion)"], horizontal=True
+    )
+
+    st.divider()
+
+    # --- Conversational controls ---
+    if mode == "Conversacional":
+        st.header("Sesion activa")
+        sid = st.session_state.session_id
+        if sid:
+            st.caption(f"ID: `{sid[:8]}...`")
+            turns = sum(1 for m in st.session_state.chat_history if m["role"] == "user")
+            st.caption(f"Turnos: {turns}")
+        else:
+            st.warning("Sin sesion activa.")
+
+        if st.button("Nueva conversacion", type="secondary", use_container_width=True):
+            _reset_session_state()
+            st.rerun()
+
+        st.divider()
+
+        st.header("Contexto del proyecto")
+        metadata = st.session_state.last_metadata
+        if metadata:
+            if metadata.get("project_name"):
+                st.write(f"**Nombre:** {metadata['project_name']}")
+            if metadata.get("assumed_team_size"):
+                st.write(f"**Equipo:** {metadata['assumed_team_size']} personas")
+            techs = metadata.get("mentioned_technologies", [])
+            if techs:
+                st.write(f"**Tecnologias:** {', '.join(techs)}")
+            if metadata.get("agreed_scope"):
+                with st.expander("Alcance acordado"):
+                    st.caption(metadata["agreed_scope"])
+        else:
+            st.caption("Sin contexto todavia.")
+
+        st.divider()
+
+    # --- Transactional controls ---
+    if mode == "Transaccional":
+        st.header("Modo de respuesta")
+        streaming_mode = st.toggle("Streaming (token a token)", value=True)
+        st.divider()
+    else:
+        streaming_mode = False
+
+    # --- Shared controls (solo CAG: no aplica al modo RAG) ---
+    if mode != "RAG (transcripcion)":
+        st.header("Ejemplos CAG en el prompt")
+        n_examples = st.slider(
+            label="",
+            min_value=1,
+            max_value=_MAX_EXAMPLES,
+            value=min(st.session_state.last_form_values["n_examples"], _MAX_EXAMPLES),
+            key="n_examples_slider",
+        )
+
+        st.divider()
+
+        fv = st.session_state.last_form_values
+        _preview = _cag_preview(
+            fv["project_type"].value, fv["detail_level"].value, fv["output_format"].value, n_examples
+        )
+        st.header("System prompt activo")
+        st.text_area(
+            label="",
+            value=_preview["system_prompt"] if _preview else "(servicio IA no disponible)",
+            height=220,
+            disabled=True,
+            key="system_prompt_display",
+        )
+
+        st.divider()
+
+        st.header("Contexto CAG — ejemplos inyectados")
+        for i, example in enumerate(_preview["examples"] if _preview else [], 1):
+            with st.expander(f"Ejemplo {i}"):
+                st.markdown("**Resumen de reunion:**")
+                st.caption(example["meeting_summary"])
+                st.markdown("**Estimacion de referencia:**")
+                st.caption(example["estimation"])
+
+        st.divider()
+    else:
+        n_examples = st.session_state.last_form_values["n_examples"]
+        fv = st.session_state.last_form_values
+
+    st.header("Metricas — ultima llamada")
+    if st.session_state.last_metrics:
+        m = st.session_state.last_metrics
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Tokens entrada", m.get("input_tokens", "—"))
+        col2.metric("Tokens salida", m.get("output_tokens", "—"))
+        col3.metric("Tokens total", m.get("total_tokens", "—"))
+        st.metric("Tiempo de respuesta", f"{m.get('elapsed', 0):.2f} s")
+        st.caption(f"Modelo: {m.get('model', '—')}")
+    else:
+        st.info("Aun no se ha realizado ninguna llamada.")
+
+    st.divider()
+
+    st.header("Historial")
+    _conn = _db_conn()
+    if _conn is None:
+        st.caption("Historial no disponible.")
+    else:
+        _recent = db.list_recent(_conn)
+        if not _recent:
+            st.caption("Sin estimaciones guardadas todavia.")
+        for row in _recent:
+            with st.expander(f"{row['created_at']:%Y-%m-%d %H:%M} · {row['mode']}"):
+                st.caption(row["input_text"][:300])
+                if row["result_text"]:
+                    st.markdown(row["result_text"][:1500])
+                elif row["result_json"]:
+                    st.json(row["result_json"], expanded=False)
+
+
+# ---------------------------------------------------------------------------
+# Conversacional mode
+# ---------------------------------------------------------------------------
+
+if mode == "Conversacional":
+    if not st.session_state.session_id:
+        st.error("No hay sesion activa. Comprueba que el servidor esta en marcha y recarga la pagina.")
+        st.stop()
+
+    # Render chat history
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    with st.form("conversational_form", clear_on_submit=True):
+        transcript = st.text_area(
+            "Transcripcion o descripcion del proyecto",
+            placeholder="Describe el proyecto, refina el alcance o añade nueva informacion...",
+            height=140,
+        )
+        uploaded_files = st.file_uploader(
+            "Adjuntos opcionales (PDF, DOCX)",
+            type=["pdf", "docx"],
+            accept_multiple_files=True,
+        )
+        col1, col2, col3 = st.columns(3)
+        project_type = col1.selectbox(
+            "Tipo de proyecto",
+            options=list(ProjectType),
+            format_func=lambda x: _PROJECT_TYPE_LABELS[x],
+            index=list(ProjectType).index(fv["project_type"]),
+        )
+        detail_level = col2.radio(
+            "Nivel de detalle",
+            options=list(DetailLevel),
+            format_func=lambda x: _DETAIL_LEVEL_LABELS[x],
+            index=list(DetailLevel).index(fv["detail_level"]),
+        )
+        output_format = col3.radio(
+            "Formato de salida",
+            options=list(OutputFormat),
+            format_func=lambda x: _OUTPUT_FORMAT_LABELS[x],
+            index=list(OutputFormat).index(fv["output_format"]),
+        )
+        submitted = st.form_submit_button("Enviar turno", type="primary", use_container_width=True)
+
+    if submitted:
+        if len(transcript.strip()) < 20:
+            st.error("La transcripcion debe tener al menos 20 caracteres.")
+        else:
+            st.session_state.last_form_values = {
+                "project_type": project_type,
+                "detail_level": detail_level,
+                "output_format": output_format,
+                "n_examples": n_examples,
+            }
+
+            session_url = ai.url(f"/api/v1/sessions/{st.session_state.session_id}/estimate")
+            form_data = {
+                "transcript": transcript,
+                "project_type": project_type.value,
+                "detail_level": detail_level.value,
+                "output_format": output_format.value,
+                "n_examples": str(n_examples),
+            }
+            files_payload = [
+                ("attachments", (f.name, f.getvalue(), f.type))
+                for f in (uploaded_files or [])
+            ]
+
+            t0 = time.perf_counter()
+            try:
+                resp_data = ai.session_estimate(st.session_state.session_id, form_data, files_payload)
+
+                usage = resp_data.get("usage", {})
+                st.session_state.last_metrics = {
+                    "model": resp_data.get("model", "—"),
+                    "input_tokens": usage.get("input_tokens", "—"),
+                    "output_tokens": usage.get("output_tokens", "—"),
+                    "total_tokens": usage.get("total_tokens", "—"),
+                    "elapsed": time.perf_counter() - t0,
+                }
+                st.session_state.last_metadata = resp_data.get("metadata")
+
+                user_label = transcript
+                if files_payload:
+                    filenames = ", ".join(f.name for f in (uploaded_files or []))
+                    user_label += f"\n\n*Adjuntos: {filenames}*"
+                st.session_state.chat_history.append({"role": "user", "content": user_label})
+                st.session_state.chat_history.append({"role": "assistant", "content": resp_data["text"]})
+                _save_history(
+                    mode="conversacional",
+                    input_text=transcript,
+                    result_text=resp_data["text"],
+                    model=resp_data.get("model"),
+                    total_tokens=usage.get("total_tokens"),
+                    elapsed_s=st.session_state.last_metrics["elapsed"],
+                )
+
+                st.rerun()
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    st.warning("La sesion ha expirado (reinicio del servidor). Creando nueva sesion...")
+                    st.session_state.session_id = _create_session()
+                    st.session_state.chat_history = []
+                else:
+                    detail = e.response.json().get("detail", str(e))
+                    st.error(f"Error del servidor: {detail}")
+            except httpx.RequestError:
+                st.error(f"No se pudo conectar con `{session_url}`. Esta el servidor en marcha?")
+
+
+# ---------------------------------------------------------------------------
+# Transaccional mode
+# ---------------------------------------------------------------------------
+
+elif mode == "Transaccional":
+    with st.form("estimation_form"):
+        description = st.text_area(
+            "Descripcion del proyecto",
+            placeholder="Describe el proyecto de software a estimar (minimo 20 caracteres)...",
+            height=160,
+        )
+        col1, col2, col3 = st.columns(3)
+        project_type = col1.selectbox(
+            "Tipo de proyecto",
+            options=list(ProjectType),
+            format_func=lambda x: _PROJECT_TYPE_LABELS[x],
+            index=list(ProjectType).index(fv["project_type"]),
+        )
+        detail_level = col2.radio(
+            "Nivel de detalle",
+            options=list(DetailLevel),
+            format_func=lambda x: _DETAIL_LEVEL_LABELS[x],
+            index=list(DetailLevel).index(fv["detail_level"]),
+        )
+        output_format = col3.radio(
+            "Formato de salida",
+            options=list(OutputFormat),
+            format_func=lambda x: _OUTPUT_FORMAT_LABELS[x],
+            index=list(OutputFormat).index(fv["output_format"]),
+        )
+        submitted = st.form_submit_button("Estimar", type="primary", use_container_width=True)
+
+    if submitted:
+        if len(description.strip()) < 20:
+            st.error("La descripcion debe tener al menos 20 caracteres.")
+        else:
+            st.session_state.last_form_values = {
+                "project_type": project_type,
+                "detail_level": detail_level,
+                "output_format": output_format,
+                "n_examples": n_examples,
+            }
+            payload = {
+                "description": description,
+                "project_type": project_type.value,
+                "detail_level": detail_level.value,
+                "output_format": output_format.value,
+                "n_examples": n_examples,
+            }
+            t0 = time.perf_counter()
+
+            if streaming_mode:
+                metadata_sink: dict = {}
+
+                try:
+                    result_text = st.write_stream(ai.estimate_stream(payload, metadata_sink))
+                    metadata_sink["elapsed"] = time.perf_counter() - t0
+                    st.session_state.last_metrics = metadata_sink
+                    st.session_state.last_result = result_text
+                    _save_history(
+                        mode="transaccional",
+                        input_text=description,
+                        result_text=result_text,
+                        model=metadata_sink.get("model"),
+                        total_tokens=metadata_sink.get("total_tokens"),
+                        elapsed_s=metadata_sink["elapsed"],
+                    )
+                except httpx.HTTPStatusError as e:
+                    e.response.read()
+                    st.error(f"Error del servidor: {e.response.json().get('detail', str(e))}")
+                except httpx.RequestError:
+                    st.error(f"No se pudo conectar con `{ai.url('/api/v1/estimate/stream')}`. Esta el servidor en marcha?")
+
+            else:
+                try:
+                    resp_data = ai.estimate(payload)
+                    result_text = resp_data["text"]
+                    usage = resp_data.get("usage", {})
+                    st.session_state.last_metrics = {
+                        "model": resp_data.get("model", "—"),
+                        "input_tokens": usage.get("input_tokens", "—"),
+                        "output_tokens": usage.get("output_tokens", "—"),
+                        "total_tokens": usage.get("total_tokens", "—"),
+                        "elapsed": time.perf_counter() - t0,
+                    }
+                    st.session_state.last_result = result_text
+                    st.markdown(result_text)
+                    _save_history(
+                        mode="transaccional",
+                        input_text=description,
+                        result_text=result_text,
+                        model=resp_data.get("model"),
+                        total_tokens=usage.get("total_tokens"),
+                        elapsed_s=st.session_state.last_metrics["elapsed"],
+                    )
+                except httpx.HTTPStatusError as e:
+                    st.error(f"Error del servidor: {e.response.json().get('detail', str(e))}")
+                except httpx.RequestError:
+                    st.error(f"No se pudo conectar con `{ai.url('/api/v1/estimate')}`. Esta el servidor en marcha?")
+
+    elif st.session_state.last_result:
+        st.markdown(st.session_state.last_result)
+
+
+# ---------------------------------------------------------------------------
+# RAG (transcripcion) mode
+# ---------------------------------------------------------------------------
+
+elif mode == "RAG (transcripcion)":
+    if "rag_transcript" not in st.session_state:
+        st.session_state.rag_transcript = ""
+
+    st.subheader("Estimacion desde transcripcion (RAG)")
+
+    example_cols = st.columns(len(_EXAMPLE_TRANSCRIPTS))
+    for col, (filename, label) in zip(example_cols, _EXAMPLE_TRANSCRIPTS.items()):
+        if col.button(label, use_container_width=True, key=f"load_{filename}"):
+            st.session_state.rag_transcript = (_EXAMPLE_TRANSCRIPTS_DIR / filename).read_text(encoding="utf-8")
+            st.rerun()
+
+    with st.form("rag_estimate_form"):
+        transcript = st.text_area(
+            "Transcripcion de la reunion",
+            value=st.session_state.rag_transcript,
+            placeholder="Pega aqui la transcripcion completa de la reunion con el cliente (minimo 100 caracteres)...",
+            height=220,
+        )
+        submitted = st.form_submit_button("Generar estimacion", type="primary", use_container_width=True)
+
+    if submitted:
+        if len(transcript.strip()) < 100:
+            st.error("La transcripcion debe tener al menos 100 caracteres.")
+        else:
+            st.session_state.rag_transcript = transcript
+            t0 = time.perf_counter()
+            try:
+                rag_estimate = ai.rag_estimate(transcript)
+                st.session_state.last_rag_estimate = rag_estimate
+                st.session_state.last_metrics = {"elapsed": time.perf_counter() - t0}
+                _save_history(
+                    mode="rag",
+                    input_text=transcript,
+                    result_json=rag_estimate,
+                    elapsed_s=st.session_state.last_metrics["elapsed"],
+                )
+            except httpx.HTTPStatusError as e:
+                detail = e.response.json().get("detail", str(e))
+                st.error(f"Error del servidor: {detail}")
+            except httpx.RequestError:
+                st.error(f"No se pudo conectar con `{ai.url('/v1/estimate/from-transcript')}`. Esta el servidor en marcha?")
+
+    estimate = st.session_state.get("last_rag_estimate")
+    if estimate:
+        confidence = estimate["confidence"]
+        _CONFIDENCE_RENDER = {
+            "high": st.success,
+            "medium": st.info,
+            "low": st.warning,
+            "insufficient": st.error,
+        }
+        _CONFIDENCE_RENDER.get(confidence, st.info)(f"Confianza: {confidence}")
+
+        if confidence == "insufficient":
+            st.write(estimate.get("insufficient_context_explanation") or "Contexto insuficiente para estimar.")
+        else:
+            col1, col2 = st.columns(2)
+            col1.metric("Dias-ingeniero totales", estimate.get("total_engineer_days", "—"))
+            col2.metric("Duracion (semanas)", estimate.get("duration_weeks", "—"))
+
+            st.markdown("**Desglose de costes**")
+            st.table(
+                [
+                    {
+                        "Componente": c["name"],
+                        "Dias-ingeniero": c["engineer_days"],
+                        "Fuentes": ", ".join(str(s) for s in c["sources"]),
+                    }
+                    for c in estimate.get("cost_breakdown", [])
+                ]
+            )
+
+            if estimate.get("assumptions"):
+                st.markdown("**Asunciones**")
+                for a in estimate["assumptions"]:
+                    st.caption(f"[{a['impact']}] {a['description']} — {a['rationale']}")
+
+            if estimate.get("sources"):
+                st.markdown("**Fuentes citadas**")
+                for s in estimate["sources"]:
+                    st.caption(f"source {s['source_id']} ({s['relevance']}) — {s['used_for']}")
+
+        with st.expander("Razonamiento del modelo"):
+            st.caption(estimate.get("reasoning", ""))

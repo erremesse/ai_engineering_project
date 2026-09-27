@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+tests
+# data/seed/ is not versioned and not needed at runtime; only the synthetic
+# corpus (budgets_sample*.json) and catalog/ go into the image.
+data/seed
